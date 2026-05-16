@@ -1,0 +1,146 @@
+- name: "allow-google-host"
+  candidate:
+    kind: "host"
+    raw_target: "www.google.com"
+    intended_action: "recon"
+    researcher_owned_account: true
+    will_access_third_party_data: false
+    legal_acknowledged: true
+  expected_decision: "ALLOW"
+  expected_rule_id: "allow-google-domain"
+  rationale: "Google host in scope with ethics flags satisfied."
+- name: "deny-notgoogle"
+  candidate:
+    kind: "host"
+    raw_target: "notgoogle.com"
+    intended_action: "recon"
+    researcher_owned_account: true
+    will_access_third_party_data: false
+    legal_acknowledged: true
+  expected_decision: "DENY"
+  expected_rule_id: "deny-default"
+  rationale: "Boundary bypass should not match Google."
+- name: "deny-google-com-evil"
+  candidate:
+    kind: "host"
+    raw_target: "google.com.evil.com"
+    intended_action: "recon"
+    researcher_owned_account: true
+    will_access_third_party_data: false
+    legal_acknowledged: true
+  expected_decision: "DENY"
+  expected_rule_id: "deny-default"
+  rationale: "Right-extension bypass should not match Google."
+- name: "deny-userinfo-trick"
+  candidate:
+    kind: "url"
+    raw_target: "https://google.com@evil.com/path"
+    intended_action: "recon"
+    researcher_owned_account: true
+    will_access_third_party_data: false
+    legal_acknowledged: true
+  expected_decision: "DENY"
+  expected_rule_id: "deny-default"
+  rationale: "URL parser should use evil.com as host."
+- name: "deny-bc-googleusercontent"
+  candidate:
+    kind: "host"
+    raw_target: "app.bc.googleusercontent.com"
+    intended_action: "recon"
+    researcher_owned_account: true
+    will_access_third_party_data: false
+    legal_acknowledged: true
+  expected_decision: "DENY"
+  expected_rule_id: "deny-cloud-bc-googleusercontent"
+  rationale: "Cloud customer app exclusion."
+- name: "deny-appspot"
+  candidate:
+    kind: "host"
+    raw_target: "customer.appspot.com"
+    intended_action: "recon"
+    researcher_owned_account: true
+    will_access_third_party_data: false
+    legal_acknowledged: true
+  expected_decision: "DENY"
+  expected_rule_id: "deny-appspot-customer-app"
+  rationale: "Appspot customer app exclusion."
+- name: "deny-sandbox-no-impact"
+  candidate:
+    kind: "host"
+    raw_target: "x.googleusercontent.com"
+    intended_action: "recon"
+    researcher_owned_account: true
+    will_access_third_party_data: false
+    legal_acknowledged: true
+  expected_decision: "DENY"
+  expected_rule_id: "deny-sandbox-googleusercontent-without-impact"
+  rationale: "Sandbox target lacks sensitive-data impact."
+- name: "deny-blogspot-owner-js"
+  candidate:
+    kind: "host"
+    raw_target: "example.blogspot.com"
+    intended_action: "recon"
+    researcher_owned_account: true
+    will_access_third_party_data: false
+    legal_acknowledged: true
+    owner_supplied_javascript: true
+  expected_decision: "DENY"
+  expected_rule_id: "deny-blogspot-owner-javascript"
+  rationale: "Owner-supplied Blogspot JavaScript exclusion."
+- name: "deny-unsafe-action"
+  candidate:
+    kind: "host"
+    raw_target: "google.com"
+    intended_action: "high-volume-scanning"
+    researcher_owned_account: true
+    will_access_third_party_data: false
+    legal_acknowledged: true
+  expected_decision: "DENY"
+  expected_rule_id: "deny-high-volume-scanning"
+  rationale: "High-volume automated scanning is prohibited."
+- name: "deny-missing-owned-account"
+  candidate:
+    kind: "host"
+    raw_target: "google.com"
+    intended_action: "recon"
+    researcher_owned_account: false
+    will_access_third_party_data: false
+    legal_acknowledged: true
+  expected_decision: "DENY"
+  expected_rule_id: "deny-missing-owned-account"
+  rationale: "Owned account acknowledgement required."
+- name: "deny-third-party-data"
+  candidate:
+    kind: "host"
+    raw_target: "google.com"
+    intended_action: "recon"
+    researcher_owned_account: true
+    will_access_third_party_data: true
+    legal_acknowledged: true
+  expected_decision: "DENY"
+  expected_rule_id: "deny-third-party-data"
+  rationale: "Third-party data access prohibited."
+- name: "deny-acquisition-blackout"
+  candidate:
+    kind: "host"
+    raw_target: "foo.withgoogle.com"
+    intended_action: "recon"
+    researcher_owned_account: true
+    will_access_third_party_data: false
+    legal_acknowledged: true
+    acquisition_date: 2026-01-01
+  expected_decision: "DENY"
+  expected_rule_id: "deny-acquisition-blackout"
+  rationale: "Acquisition target is too recent."
+- name: "allow-acquisition-after-blackout"
+  candidate:
+    kind: "host"
+    raw_target: "foo.withgoogle.com"
+    intended_action: "recon"
+    researcher_owned_account: true
+    will_access_third_party_data: false
+    legal_acknowledged: true
+    acquisition_date: 2025-01-01
+  expected_decision: "ALLOW"
+  expected_rule_id: "allow-withgoogle-acquisition-domain"
+  rationale: "Acquisition target after blackout with safe flags."
