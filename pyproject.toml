@@ -37,6 +37,7 @@ classifiers = [
 ]
 dependencies = [
     "httpx>=0.28",
+    "playwright>=1.59.0",
     "pydantic>=2.12",
     "PyYAML>=6.0.2",
     "tldextract>=5.3",

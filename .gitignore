@@ -34,3 +34,5 @@ config/operator_policy.yaml
 # Generated project output
 artifacts/
 planning/
+catalogs/
+scenarios/generated/

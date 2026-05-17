@@ -8,6 +8,7 @@ from vrp_hunt.guardrails import GateDecision, TargetCandidate
 from vrp_hunt.recon import AdapterCapability, AdapterResult, Asset, ReconContext, ReconScope
 from vrp_hunt.mobile_recon.extractors import (
     extract_mobile_endpoints,
+    extract_mobile_risk_notes,
     extract_mobile_secret_notes,
     parse_android_manifest,
     parse_dynamic_messages,
@@ -127,10 +128,13 @@ class MobileReconAdapter:
 
     def _scan_artifact_texts(self, target: MobileAppTarget) -> list[Asset]:
         assert target.artifact_path is not None
-        path = Path(target.artifact_path)
+        return self._scan_artifact_texts_from_path(target.artifact_path, parent=target.app_id)
+
+    @staticmethod
+    def _scan_artifact_texts_from_path(path: Path, *, parent: str) -> list[Asset]:
         if path.is_file():
             text = path.read_text(encoding="utf-8", errors="ignore")
-            return self._assets_from_text(text, parent=target.app_id)
+            return MobileReconAdapter._assets_from_text(text, parent=parent)
         if not path.exists():
             return []
 
@@ -141,7 +145,7 @@ class MobileReconAdapter:
             text = file_path.read_text(encoding="utf-8", errors="ignore")
             if file_path.name == "AndroidManifest.xml":
                 assets.extend(parse_android_manifest(text))
-            assets.extend(self._assets_from_text(text, parent=target.app_id))
+            assets.extend(MobileReconAdapter._assets_from_text(text, parent=parent))
         return assets
 
     @staticmethod
@@ -149,4 +153,5 @@ class MobileReconAdapter:
         return [
             *extract_mobile_endpoints(text, parent=parent),
             *extract_mobile_secret_notes(text, parent=parent),
+            *extract_mobile_risk_notes(text, parent=parent),
         ]

@@ -16,6 +16,13 @@ SECRET_PATTERNS = {
     "bearer_token": re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{12,}"),
     "google_api_key_shape": re.compile(r"\bAIza[0-9A-Za-z_-]{20,}\b"),
 }
+RISK_PATTERNS = {
+    "webview-js-bridge": re.compile(r"\baddJavascriptInterface\s*\("),
+    "webview-javascript-enabled": re.compile(r"\bsetJavaScriptEnabled\s*\(\s*true\s*\)"),
+    "webview-file-access-enabled": re.compile(r"\bsetAllowFileAccess\s*\(\s*true\s*\)"),
+    "intent-uri-parsing": re.compile(r"\bIntent\.parseUri\s*\("),
+    "custom-tab-or-browser-fallback": re.compile(r"\bS\.browser_fallback_url\b|\bbrowser_fallback_url\b"),
+}
 
 
 def extract_mobile_endpoints(text: str, *, parent: str, source: str = "mobile-static") -> list[Asset]:
@@ -50,6 +57,22 @@ def extract_mobile_secret_notes(text: str, *, parent: str, source: str = "mobile
     return assets
 
 
+def extract_mobile_risk_notes(text: str, *, parent: str, source: str = "mobile-risk-scan") -> list[Asset]:
+    assets: list[Asset] = []
+    for pattern_name, pattern in RISK_PATTERNS.items():
+        if pattern.search(text):
+            assets.append(
+                Asset(
+                    kind="note",
+                    value=f"mobile-risk:{pattern_name}",
+                    source=source,
+                    parent=parent,
+                    metadata={"redacted": "true"},
+                )
+            )
+    return assets
+
+
 def parse_android_manifest(manifest_xml: str, *, source: str = "android-manifest") -> list[Asset]:
     root = ET.fromstring(manifest_xml)
     package_name = root.attrib.get("package", "")
@@ -58,13 +81,23 @@ def parse_android_manifest(manifest_xml: str, *, source: str = "android-manifest
         for element in root.findall(f".//{tag}"):
             name = element.attrib.get(f"{ANDROID_NS}name")
             if name:
+                metadata = {"component_type": tag}
+                exported = element.attrib.get(f"{ANDROID_NS}exported")
+                permission = element.attrib.get(f"{ANDROID_NS}permission")
+                intent_filter_count = len(element.findall("intent-filter"))
+                if exported is not None:
+                    metadata["exported"] = exported
+                if permission is not None:
+                    metadata["permission"] = permission
+                if intent_filter_count:
+                    metadata["intent_filters"] = str(intent_filter_count)
                 assets.append(
                     Asset(
                         kind="mobile_component",
                         value=_qualify_component(name, package_name),
                         source=source,
                         parent=package_name or None,
-                        metadata={"component_type": tag},
+                        metadata=metadata,
                     )
                 )
             for data in element.findall(".//data"):

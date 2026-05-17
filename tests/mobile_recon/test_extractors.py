@@ -1,5 +1,6 @@
 from vrp_hunt.mobile_recon import (
     extract_mobile_endpoints,
+    extract_mobile_risk_notes,
     extract_mobile_secret_notes,
     parse_android_manifest,
     parse_dynamic_messages,
@@ -14,7 +15,7 @@ ANDROID_MANIFEST = """<manifest xmlns:android="http://schemas.android.com/apk/re
         <data android:scheme="gexample" android:host="open" android:pathPrefix="/item" />
       </intent-filter>
     </activity>
-    <service android:name="com.google.example.SyncService" />
+    <service android:name="com.google.example.SyncService" android:exported="false" />
   </application>
 </manifest>
 """
@@ -27,6 +28,10 @@ def test_parse_android_manifest_components_and_deeplinks() -> None:
     assert "com.google.example.MainActivity" in values
     assert "com.google.example.SyncService" in values
     assert "gexample://open/item" in values
+    main_activity = next(asset for asset in assets if asset.value == "com.google.example.MainActivity")
+    assert main_activity.metadata["intent_filters"] == "1"
+    sync_service = next(asset for asset in assets if asset.value == "com.google.example.SyncService")
+    assert sync_service.metadata["exported"] == "false"
 
 
 def test_extract_mobile_endpoints() -> None:
@@ -41,6 +46,19 @@ def test_extract_mobile_secret_notes_redacts_values() -> None:
     notes = extract_mobile_secret_notes("apiKey = 'AIza12345678901234567890'", parent="app")
     assert notes[0].value == "potential-secret-pattern:api_key"
     assert notes[0].metadata["redacted"] == "true"
+
+
+def test_extract_mobile_risk_notes() -> None:
+    notes = extract_mobile_risk_notes(
+        "webView.getSettings().setJavaScriptEnabled(true); webView.addJavascriptInterface(obj, 'bridge');",
+        parent="app",
+    )
+
+    assert {note.value for note in notes} == {
+        "mobile-risk:webview-javascript-enabled",
+        "mobile-risk:webview-js-bridge",
+    }
+    assert all(note.metadata["redacted"] == "true" for note in notes)
 
 
 def test_parse_dynamic_messages() -> None:

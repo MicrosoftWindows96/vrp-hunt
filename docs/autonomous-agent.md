@@ -230,6 +230,9 @@ Approval handling is explicit:
   `APPROVE <index>`, `APPROVE <action_id>`, or `APPROVE ALL`.
 - `--approval-mode approve-all` approves every risky action.
 - `--approve-risky` remains as a legacy shortcut for `approve-all`.
+- `--yolo` is a shorter approval shortcut for owned-account automation. It does
+  not disable guardrails, budgets, operator policy, legal acknowledgement
+  requirements, or third-party-data stops.
 
 The CLI keeps machine-readable run results on stdout as JSON. Approval UI text is
 written to stderr.
@@ -251,6 +254,157 @@ offline or validation runner, and emits one JSON object containing the approved
 plan, run result, and generated FindingArtifact/ReportDraft bundle. It does not
 auto-approve risky actions, create accounts, store secrets, or send validation
 traffic outside the configured request budget.
+
+## Owned-Object Scenario Automation
+
+`owned-browser-scenario` executes repeatable access-state assertions against
+exact researcher-owned object URLs. A scenario binds each step to an
+already-authenticated owned test-account profile or local CDP browser session
+and requires `researcher_owned: true`.
+
+```yaml
+scenario_id: docs-private-derived-deny
+researcher_owned: true
+accounts:
+  - account_id: owned-b
+    cdp_url: http://127.0.0.1:9223
+steps:
+  - name: private-doc-denied-to-owned-b
+    account_id: owned-b
+    url: https://docs.google.com/document/d/OWNED_TEST_OBJECT_ID/edit
+    expected_state: access_denied
+```
+
+```bash
+uv run vrp-hunt owned-browser-scenario \
+  --scenario scenarios/docs-private-derived-deny.yaml \
+  --expand-derived \
+  --output-dir artifacts/owned-scenarios/docs-private-derived-deny
+```
+
+With `--expand-derived`, the runner checks conservative view/edit/preview variants
+for the same owned object. Results contain redacted URL hashes and access-state
+classifications only. A mismatch is treated as a lead for final human-reviewed
+validation, not as an automatic submission.
+
+Pass `--yolo` to continue through mismatches and collect the full matrix. The
+scenario must still confirm `researcher_owned: true`, all URLs must be exact
+owned-object URLs, and third-party data remains a hard stop.
+
+## Scenario Generation
+
+`scenario-generate` turns a catalog of owned objects into runnable scenario
+files. This keeps the access matrix declarative while making the generated checks
+repeatable.
+
+```yaml
+catalog_id: docs-baseline
+researcher_owned: true
+accounts:
+  - account_id: owned-a
+    cdp_url: http://127.0.0.1:9222
+  - account_id: owned-b
+    cdp_url: http://127.0.0.1:9223
+    cookie_env: OWNED_B_COOKIE
+objects:
+  - object_id: owned-a-private-doc
+    product: docs
+    owner_account_id: owned-a
+    url: https://docs.google.com/document/d/OWNED_TEST_OBJECT_ID/edit
+    expected_states:
+      owned-a: access_granted
+      owned-b: access_denied
+```
+
+```bash
+uv run vrp-hunt scenario-generate \
+  --object-catalog catalogs/docs-baseline.yaml \
+  --output-dir scenarios/generated/docs-baseline
+```
+
+The generator writes one YAML scenario per object and a `scenario-index.json`
+summary. It does not send traffic. Catalog validation rejects unconfirmed
+ownership, unknown accounts, broad URLs, sensitive objects, and third-party-data
+objects.
+
+## Scenario Artifacts
+
+`scenario-artifacts` converts high-signal owned-browser scenario mismatches into
+draft report artifacts:
+
+```bash
+uv run vrp-hunt scenario-artifacts \
+  --scenario scenarios/generated/docs-baseline/docs-baseline-owned-a-private-doc.yaml \
+  --scenario-result artifacts/scenarios/docs-baseline/scenario-result.json \
+  --researcher-account owned-a \
+  --researcher-account owned-b \
+  --component "Docs private object" \
+  --output-dir artifacts/findings/docs-baseline
+```
+
+The converter emits `artifact-bundle.json`, one `FindingArtifact` JSON file, one
+`ReportDraft` JSON file, and one Markdown report draft per candidate. It only
+creates candidates for `expected_state: access_denied` results that observed
+`actual_state: access_granted` and did not touch third-party data. All other
+scenario results are skipped with a reason.
+
+## Derived HTTP Checks
+
+`derived-http-check` tests metadata-only endpoints for an exact owned object,
+including export, download, and thumbnail-style URLs. Cookie material is read
+from an environment variable and never written to output.
+
+```bash
+OWNED_B_COOKIE='SID=...; HSID=...' uv run vrp-hunt derived-http-check \
+  --account-id owned-b \
+  --url "https://docs.google.com/document/d/OWNED_TEST_OBJECT_ID/edit" \
+  --cookie-env OWNED_B_COOKIE \
+  --expected-state access_denied \
+  --confirm-owned-object \
+  --output-dir artifacts/derived/docs-private-owned-b
+```
+
+The runner uses `HEAD` by default and supports streamed `GET` without reading
+the response body. It records status code, final host, redacted path hashes,
+redirect count, selected safe headers, and a metadata-only access-state
+classification. Same-host redirects may be followed up to a small limit;
+cross-site redirects are recorded and classified without following them.
+
+Convert high-signal derived HTTP metadata mismatches into draft artifacts:
+
+```bash
+uv run vrp-hunt derived-http-artifacts \
+  --derived-http-result artifacts/derived/docs-private-owned-b/derived-http-result.json \
+  --researcher-account owned-a \
+  --researcher-account owned-b \
+  --component "Docs export endpoint" \
+  --output-dir artifacts/findings/derived-docs
+```
+
+The converter only drafts findings for expected `access_denied` observations
+that produced `access_granted_metadata`, had no errors, stored no response body,
+and read zero response-body bytes. Other observations are skipped with reasons.
+
+## Owned-Object Pipeline
+
+`owned-object-pipeline` runs the local hunting workflow from one owned-object
+catalog:
+
+```bash
+OWNED_B_COOKIE='SID=...; HSID=...' uv run vrp-hunt owned-object-pipeline \
+  --object-catalog catalogs/docs-baseline.yaml \
+  --output-dir artifacts/pipeline/docs-baseline \
+  --researcher-account owned-a \
+  --researcher-account owned-b \
+  --component "Docs private object" \
+  --yolo
+```
+
+The pipeline writes generated scenarios, scenario run results, scenario-derived
+finding drafts, derived HTTP metadata results, derived finding drafts, and a
+single `pipeline-summary.json`. `cookie_env` fields on catalog accounts opt
+those accounts into derived HTTP checks; missing `cookie_env` values are skipped
+instead of guessed.
 
 `recon-iterate` turns a passive recon artifact into the next approval queue
 without sending traffic:
