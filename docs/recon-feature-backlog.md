@@ -2,29 +2,29 @@
 
 ## Priority Track
 
-- [X] Scope/program registry with in-scope, out-of-scope, reward, safe-harbor, and rate-limit records
-- [X] Scope diff watcher for fresh-target alerts
-- [X] Workflow YAML runner for recon phases
-- [X] Passive source manager with provider health and API key status
-- [X] Asset confidence and freshness scoring
-- [X] JavaScript and API endpoint mining pipeline
-- [X] Authenticated owned-account crawler feeding IDOR/OAuth/CSRF validators
+- [x] Scope/program registry with in-scope, out-of-scope, reward, safe-harbor, and rate-limit records
+- [x] Scope diff watcher for fresh-target alerts
+- [x] Workflow YAML runner for recon phases
+- [x] Passive source manager with provider health and API key status
+- [x] Asset confidence and freshness scoring
+- [x] JavaScript and API endpoint mining pipeline
+- [x] Authenticated owned-account crawler feeding IDOR/OAuth/CSRF validators
 - [x] Mobile APK/MobSF/jadx importer
 - [x] UI dashboard for assets, approvals, evidence, and findings
 
 ## Scope And Program Intelligence
 
 - [x] Scope ingestion from HackerOne, Bugcrowd, Intigriti, and public JSON
-- [X] Program profile records for rewards, exclusions, safe harbor, and rate limits
-- [X] Scope-normalized target registry with in-scope/out-of-scope proofs
-- [X] Scope diff watcher like bbscope's fresh-target model
-- [X] Asset freshness scoring
-- [X] Fresh-target alerts
+- [x] Program profile records for rewards, exclusions, safe harbor, and rate limits
+- [x] Scope-normalized target registry with in-scope/out-of-scope proofs
+- [x] Scope diff watcher like bbscope's fresh-target model
+- [x] Asset freshness scoring
+- [x] Fresh-target alerts
 - [x] Submission checklist against program rules
 
 ## Passive Recon And Asset Discovery
 
-- [X] Passive source manager for API keys and provider health
+- [x] Passive source manager for API keys and provider health
 - [x] Subdomain source attribution and confidence scoring
 - [x] Wildcard DNS detection and elimination
 - [x] DNS record collector for CNAME, MX, TXT, NS, CAA, DMARC, and SPF
@@ -40,7 +40,7 @@
 
 ## Web Recon And Endpoint Mining
 
-- [X] JavaScript URL extraction and endpoint mining
+- [x] JavaScript URL extraction and endpoint mining
 - [x] CSP endpoint extraction
 - [x] OpenAPI/Swagger/Postman collection discovery
 - [x] GraphQL endpoint discovery and safe introspection check
@@ -63,7 +63,7 @@
 
 ## Workflow Orchestration
 
-- [X] YAML workflow definitions
+- [x] YAML workflow definitions
 - [x] Workflow DAG with dependencies, conditions, and resumability
 - [x] Distributed worker mode with local-first execution
 - [x] Scheduled monitoring runs
