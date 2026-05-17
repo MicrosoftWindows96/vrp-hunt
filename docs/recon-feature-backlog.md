@@ -26,14 +26,14 @@
 
 - [X] Passive source manager for API keys and provider health
 - [x] Subdomain source attribution and confidence scoring
-- [ ] Wildcard DNS detection and elimination
-- [ ] DNS record collector for CNAME, MX, TXT, NS, CAA, DMARC, and SPF
-- [ ] CDN/WAF fingerprinting
-- [ ] ASN and owned netblock expansion
-- [ ] Reverse IP and certificate transparency expansion
-- [ ] Subdomain permutation engine with strict caps
-- [ ] Recursive passive subdomain discovery
-- [ ] Historical URL ingestion from Wayback, urlscan, and Common Crawl
+- [x] Wildcard DNS detection and elimination
+- [x] DNS record collector for CNAME, MX, TXT, NS, CAA, DMARC, and SPF
+- [x] CDN/WAF fingerprinting
+- [x] ASN and owned netblock expansion
+- [x] Reverse IP and certificate transparency expansion
+- [x] Subdomain permutation engine with strict caps
+- [x] Recursive passive subdomain discovery
+- [x] Historical URL ingestion from Wayback, urlscan, and Common Crawl
 - [ ] robots.txt parser
 - [ ] sitemap.xml parser
 - [ ] security.txt parser

@@ -64,7 +64,7 @@ def parse_httpx_jsonl(output: str, *, source: str = "httpx") -> list[Asset]:
                     kind="url",
                     value=url,
                     source=source,
-                    metadata=_metadata(parsed, ["status_code", "title", "webserver", "content_length"]),
+                    metadata=_httpx_metadata(parsed),
                 )
             )
             host = urlsplit(url).hostname
@@ -148,6 +148,28 @@ def _metadata(parsed: dict[object, object], keys: list[str]) -> dict[str, str]:
         value = parsed.get(key)
         if value is not None:
             metadata[key] = str(value)
+    return metadata
+
+
+def _httpx_metadata(parsed: dict[object, object]) -> dict[str, str]:
+    metadata = _metadata(
+        parsed,
+        [
+            "status_code",
+            "title",
+            "webserver",
+            "server",
+            "content_length",
+            "cdn_name",
+            "cdn_type",
+            "location",
+        ],
+    )
+    headers = parsed.get("headers") or parsed.get("header")
+    if isinstance(headers, dict):
+        for key, value in headers.items():
+            if isinstance(key, str) and value is not None:
+                metadata[f"header:{key.strip().lower()}"] = str(value)
     return metadata
 
 

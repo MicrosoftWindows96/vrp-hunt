@@ -90,11 +90,34 @@ from vrp_hunt.programs import (
 )
 from vrp_hunt.recon import (
     Asset,
+    DnsRecord,
+    DnsRecordCollection,
     PassiveSourceCatalogError,
+    WildcardDnsProbe,
+    asn_netblock_assets,
+    asn_netblock_record_from_spec,
+    build_asn_netblock_report,
+    build_dns_record_plan,
+    build_recursive_passive_plan,
+    build_reverse_ct_expansion_report,
+    cdn_waf_fingerprint_assets,
     evaluate_passive_source_health,
+    fingerprint_cdn_waf,
+    filter_wildcard_dns_assets,
+    generate_subdomain_permutations,
+    ingest_historical_url_files,
+    import_dns_record_files,
+    load_asn_netblock_records,
+    load_words,
     load_passive_source_catalog,
     passive_source_env_template,
+    passive_expansion_assets,
+    recursive_passive_assets,
+    RecursivePassiveConfig,
+    SubdomainPermutationConfig,
     score_assets,
+    wildcard_probe_from_asset,
+    wildcard_probe_from_spec,
 )
 from vrp_hunt.reporting import Platform, ReportDraft, render_markdown_report
 from vrp_hunt.ui import build_dashboard_data, write_dashboard
@@ -134,6 +157,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _passive_sources_env_template(args)
     if args.command == "asset-score":
         return _asset_score(args)
+    if args.command == "wildcard-dns-filter":
+        return _wildcard_dns_filter(args)
+    if args.command == "dns-record-plan":
+        return _dns_record_plan(args)
+    if args.command == "dns-record-import":
+        return _dns_record_import(args)
+    if args.command == "cdn-waf-fingerprint":
+        return _cdn_waf_fingerprint(args)
+    if args.command == "asn-netblock-import":
+        return _asn_netblock_import(args)
+    if args.command == "reverse-ct-import":
+        return _reverse_ct_import(args)
+    if args.command == "subdomain-permute":
+        return _subdomain_permute(args)
+    if args.command == "recursive-passive-plan":
+        return _recursive_passive_plan(args)
+    if args.command == "historical-url-import":
+        return _historical_url_import(args)
     if args.command == "endpoint-mine":
         return _endpoint_mine(args)
     if args.command == "owned-crawl-plan":
@@ -362,6 +403,154 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_agent_inputs(asset_score)
     asset_score.add_argument("--output", type=Path)
+
+    wildcard_dns = subparsers.add_parser(
+        "wildcard-dns-filter",
+        help="Eliminate wildcard DNS noise using saved nonexistent-host probe observations",
+    )
+    wildcard_dns.add_argument("--asset-file", type=Path, required=True)
+    wildcard_dns.add_argument(
+        "--probe",
+        action="append",
+        default=[],
+        metavar="HOST=ADDR[,ADDR]",
+        help="Pre-resolved nonexistent probe host; repeat for multiple probes",
+    )
+    wildcard_dns.add_argument(
+        "--probe-file",
+        type=Path,
+        action="append",
+        default=[],
+        help="JSONL Asset file with host assets containing address metadata",
+    )
+    wildcard_dns.add_argument("--min-probes", type=int, default=2)
+    wildcard_dns.add_argument("--output", type=Path)
+    wildcard_dns.add_argument("--assets-output", type=Path, help="Optional filtered JSONL asset output")
+
+    dns_plan = subparsers.add_parser(
+        "dns-record-plan",
+        help="Build offline dig commands for DNS record collection",
+    )
+    dns_plan.add_argument("--domain", required=True)
+    dns_plan.add_argument("--output", type=Path)
+
+    dns_import = subparsers.add_parser(
+        "dns-record-import",
+        help="Parse saved dig +short DNS record output",
+    )
+    dns_import.add_argument("--domain", required=True)
+    dns_import.add_argument(
+        "--record",
+        action="append",
+        default=[],
+        metavar="NAME:TYPE=PATH",
+        help="Saved dig output; TYPE is CNAME, MX, TXT, NS, or CAA",
+    )
+    dns_import.add_argument("--output", type=Path)
+
+    cdn_waf = subparsers.add_parser(
+        "cdn-waf-fingerprint",
+        help="Fingerprint CDN/WAF providers from saved HTTP and DNS metadata",
+    )
+    cdn_waf.add_argument("--asset-file", type=Path, action="append", default=[])
+    cdn_waf.add_argument("--dns-records", type=Path, action="append", default=[])
+    cdn_waf.add_argument("--output", type=Path)
+    cdn_waf.add_argument("--assets-output", type=Path, help="Optional technology JSONL output")
+
+    asn_import = subparsers.add_parser(
+        "asn-netblock-import",
+        help="Normalize saved ASN/netblock ownership records",
+    )
+    asn_import.add_argument(
+        "--record",
+        action="append",
+        default=[],
+        metavar="ASNNN:ORG=CIDR",
+        help="Owned netblock record; repeat for multiple prefixes",
+    )
+    asn_import.add_argument("--input", type=Path, action="append", default=[])
+    asn_import.add_argument("--output", type=Path)
+    asn_import.add_argument("--assets-output", type=Path, help="Optional note JSONL output")
+
+    reverse_ct = subparsers.add_parser(
+        "reverse-ct-import",
+        help="Import saved reverse-IP and certificate-transparency host expansion outputs",
+    )
+    reverse_ct.add_argument(
+        "--reverse-ip",
+        type=Path,
+        action="append",
+        default=[],
+        help="Saved reverse-IP JSON, JSONL, or text output",
+    )
+    reverse_ct.add_argument(
+        "--ct",
+        type=Path,
+        action="append",
+        default=[],
+        help="Saved certificate-transparency JSON, JSONL, or text output",
+    )
+    reverse_ct.add_argument(
+        "--scope-domain",
+        action="append",
+        default=[],
+        help="Allowed domain or host suffix; repeat for multiple scope roots",
+    )
+    reverse_ct.add_argument("--output", type=Path)
+    reverse_ct.add_argument("--assets-output", type=Path, help="Optional host JSONL output")
+
+    permute = subparsers.add_parser(
+        "subdomain-permute",
+        help="Generate strictly capped offline subdomain permutation candidates",
+    )
+    permute.add_argument("--seed", action="append", default=[], help="Seed hostname")
+    permute.add_argument("--seed-file", type=Path, action="append", default=[], help="Host Asset JSONL")
+    permute.add_argument("--word", action="append", default=[], help="Permutation word")
+    permute.add_argument("--word-file", type=Path, action="append", default=[])
+    permute.add_argument(
+        "--scope-domain",
+        action="append",
+        default=[],
+        help="Allowed domain or host suffix; repeat for multiple scope roots",
+    )
+    permute.add_argument("--max-candidates", type=int, default=100)
+    permute.add_argument("--max-per-seed", type=int, default=20)
+    permute.add_argument("--output", type=Path)
+    permute.add_argument("--assets-output", type=Path, help="Optional candidate host JSONL output")
+
+    recursive_passive = subparsers.add_parser(
+        "recursive-passive-plan",
+        help="Plan capped recursive passive subdomain discovery from saved host assets",
+    )
+    recursive_passive.add_argument("--asset-file", type=Path, action="append", default=[])
+    recursive_passive.add_argument("--host", action="append", default=[])
+    recursive_passive.add_argument(
+        "--seed-domain",
+        action="append",
+        default=[],
+        help="Root domain already approved for passive discovery",
+    )
+    recursive_passive.add_argument("--max-depth", type=int, default=2)
+    recursive_passive.add_argument("--max-queries", type=int, default=25)
+    recursive_passive.add_argument("--min-hosts-per-zone", type=int, default=2)
+    recursive_passive.add_argument("--output", type=Path)
+    recursive_passive.add_argument("--assets-output", type=Path, help="Optional note JSONL output")
+
+    historical = subparsers.add_parser(
+        "historical-url-import",
+        help="Import saved Wayback, urlscan, and Common Crawl URL exports",
+    )
+    historical.add_argument("--wayback", type=Path, action="append", default=[])
+    historical.add_argument("--urlscan", type=Path, action="append", default=[])
+    historical.add_argument("--common-crawl", type=Path, action="append", default=[])
+    historical.add_argument(
+        "--scope-domain",
+        action="append",
+        default=[],
+        help="Allowed domain or host suffix; repeat for multiple scope roots",
+    )
+    historical.add_argument("--output", type=Path)
+    historical.add_argument("--assets-output", type=Path, help="Optional URL/endpoint JSONL output")
 
     endpoint_mine = subparsers.add_parser(
         "endpoint-mine",
@@ -1139,6 +1328,216 @@ def _asset_score(args: argparse.Namespace) -> int:
     return 0
 
 
+def _wildcard_dns_filter(args: argparse.Namespace) -> int:
+    try:
+        assets = _load_assets([], args.asset_file)
+        probes = _load_wildcard_dns_probes(args.probe, args.probe_file)
+        if not probes:
+            raise ValueError("at least one --probe or --probe-file observation is required")
+        report = filter_wildcard_dns_assets(
+            assets,
+            probes,
+            min_probes=args.min_probes,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"wildcard dns filter error: {exc}", file=sys.stderr)
+        return 2
+
+    output = report.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, report.kept_assets)
+    return 0
+
+
+def _dns_record_plan(args: argparse.Namespace) -> int:
+    try:
+        plan = build_dns_record_plan(args.domain)
+    except ValueError as exc:
+        print(f"dns record plan error: {exc}", file=sys.stderr)
+        return 2
+    output = plan.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    return 0
+
+
+def _dns_record_import(args: argparse.Namespace) -> int:
+    try:
+        collection = import_dns_record_files(args.domain, args.record)
+    except ValueError as exc:
+        print(f"dns record import error: {exc}", file=sys.stderr)
+        return 2
+    output = collection.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    return 1 if collection.warnings else 0
+
+
+def _cdn_waf_fingerprint(args: argparse.Namespace) -> int:
+    try:
+        assets = _load_asset_jsonl_files(args.asset_file)
+        dns_records = _load_dns_record_collections(args.dns_records)
+        if not assets and not dns_records:
+            raise ValueError("at least one --asset-file or --dns-records path is required")
+        report = fingerprint_cdn_waf(assets, dns_records=dns_records)
+    except (OSError, ValueError) as exc:
+        print(f"cdn/waf fingerprint error: {exc}", file=sys.stderr)
+        return 2
+
+    output = report.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, cdn_waf_fingerprint_assets(report))
+    return 0
+
+
+def _asn_netblock_import(args: argparse.Namespace) -> int:
+    try:
+        records = [asn_netblock_record_from_spec(spec) for spec in args.record]
+        warnings: list[str] = []
+        for path in args.input:
+            loaded, load_warnings = load_asn_netblock_records(path)
+            records.extend(loaded)
+            warnings.extend(load_warnings)
+        if not records:
+            raise ValueError("at least one --record or --input path is required")
+        report = build_asn_netblock_report(records).model_copy(update={"warnings": warnings})
+    except (OSError, ValueError) as exc:
+        print(f"asn netblock import error: {exc}", file=sys.stderr)
+        return 2
+
+    output = report.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, asn_netblock_assets(report))
+    return 1 if report.warnings else 0
+
+
+def _reverse_ct_import(args: argparse.Namespace) -> int:
+    try:
+        if not args.reverse_ip and not args.ct:
+            raise ValueError("at least one --reverse-ip or --ct path is required")
+        report = build_reverse_ct_expansion_report(
+            reverse_ip_files=args.reverse_ip,
+            certificate_transparency_files=args.ct,
+            scope_domains=args.scope_domain,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"reverse/ct import error: {exc}", file=sys.stderr)
+        return 2
+
+    output = report.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, passive_expansion_assets(report.records))
+    return 1 if report.warnings else 0
+
+
+def _subdomain_permute(args: argparse.Namespace) -> int:
+    try:
+        seeds = [*args.seed, *_host_values_from_asset_files(args.seed_file)]
+        words = [*args.word]
+        for path in args.word_file:
+            words.extend(load_words(path))
+        if not seeds:
+            raise ValueError("at least one --seed or --seed-file host is required")
+        config = SubdomainPermutationConfig(
+            scope_domains=args.scope_domain,
+            words=words,
+            max_candidates=args.max_candidates,
+            max_per_seed=args.max_per_seed,
+        )
+        report = generate_subdomain_permutations(seeds, config=config)
+    except (OSError, ValueError) as exc:
+        print(f"subdomain permutation error: {exc}", file=sys.stderr)
+        return 2
+
+    output = report.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, report.assets)
+    return 1 if report.warnings else 0
+
+
+def _recursive_passive_plan(args: argparse.Namespace) -> int:
+    try:
+        hosts = [*args.host, *_host_values_from_asset_files(args.asset_file)]
+        if not hosts:
+            raise ValueError("at least one --host or --asset-file host is required")
+        config = RecursivePassiveConfig(
+            seed_domains=args.seed_domain,
+            max_depth=args.max_depth,
+            max_queries=args.max_queries,
+            min_hosts_per_zone=args.min_hosts_per_zone,
+        )
+        plan = build_recursive_passive_plan(hosts, config=config)
+    except (OSError, ValueError) as exc:
+        print(f"recursive passive plan error: {exc}", file=sys.stderr)
+        return 2
+
+    output = plan.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, recursive_passive_assets(plan))
+    return 1 if plan.warnings else 0
+
+
+def _historical_url_import(args: argparse.Namespace) -> int:
+    try:
+        if not args.wayback and not args.urlscan and not args.common_crawl:
+            raise ValueError("at least one --wayback, --urlscan, or --common-crawl path is required")
+        report = ingest_historical_url_files(
+            wayback_files=args.wayback,
+            urlscan_files=args.urlscan,
+            common_crawl_files=args.common_crawl,
+            scope_domains=args.scope_domain,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"historical url import error: {exc}", file=sys.stderr)
+        return 2
+
+    output = report.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, report.assets)
+    return 1 if report.warnings else 0
+
+
 def _endpoint_mine(args: argparse.Namespace) -> int:
     try:
         documents = [_load_web_content_document(spec) for spec in args.document]
@@ -1816,6 +2215,39 @@ def _load_owned_crawl_page(spec: str) -> OwnedAccountCrawlPage:
         body=path.read_text(encoding="utf-8"),
         source=str(path),
     )
+
+
+def _load_wildcard_dns_probes(probe_specs: list[str], probe_files: list[Path]) -> list[WildcardDnsProbe]:
+    probes = [wildcard_probe_from_spec(spec) for spec in probe_specs]
+    for path in probe_files:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            probe = wildcard_probe_from_asset(Asset.model_validate_json(line))
+            if probe is not None:
+                probes.append(probe)
+    return probes
+
+
+def _load_asset_jsonl_files(paths: list[Path]) -> list[Asset]:
+    assets: list[Asset] = []
+    for path in paths:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                assets.append(Asset.model_validate_json(line))
+    return assets
+
+
+def _host_values_from_asset_files(paths: list[Path]) -> list[str]:
+    return [asset.value for asset in _load_asset_jsonl_files(paths) if asset.kind == "host"]
+
+
+def _load_dns_record_collections(paths: list[Path]) -> list[DnsRecord]:
+    records: list[DnsRecord] = []
+    for path in paths:
+        collection = DnsRecordCollection.model_validate_json(path.read_text(encoding="utf-8"))
+        records.extend(collection.records)
+    return records
 
 
 def _write_asset_jsonl(path: Path, assets: list[Asset]) -> None:

@@ -1,7 +1,25 @@
 """Surface-agnostic recon core contracts and orchestration."""
 
 from vrp_hunt.recon.adapters import ReconAdapter, ReconContext
+from vrp_hunt.recon.dns_records import (
+    DigQueryType,
+    DnsRecord,
+    DnsRecordCollection,
+    DnsRecordPlan,
+    DnsRecordQuery,
+    DnsRecordType,
+    build_dns_record_plan,
+    import_dns_record_files,
+    parse_dig_records,
+)
 from vrp_hunt.recon.engine import ReconEngine, ReconRunResult
+from vrp_hunt.recon.fingerprinting import (
+    CdnWafFingerprint,
+    CdnWafFingerprintReport,
+    CdnWafSignal,
+    cdn_waf_fingerprint_assets,
+    fingerprint_cdn_waf,
+)
 from vrp_hunt.recon.models import (
     AdapterCapability,
     AdapterResult,
@@ -10,6 +28,23 @@ from vrp_hunt.recon.models import (
     HttpRequest,
     HttpResponse,
     ReconScope,
+)
+from vrp_hunt.recon.historical_urls import (
+    HistoricalUrlIngestionReport,
+    HistoricalUrlRecord,
+    HistoricalUrlSource,
+    historical_url_assets,
+    ingest_historical_url_files,
+    load_historical_url_records,
+)
+from vrp_hunt.recon.netblocks import (
+    AsnNetblockRecord,
+    AsnNetblockReport,
+    AsnNetblockSummary,
+    asn_netblock_assets,
+    asn_netblock_record_from_spec,
+    build_asn_netblock_report,
+    load_asn_netblock_records,
 )
 from vrp_hunt.recon.passive_sources import (
     DEFAULT_PASSIVE_SOURCE_CATALOG_PATH,
@@ -24,6 +59,32 @@ from vrp_hunt.recon.passive_sources import (
     load_passive_source_catalog,
     passive_source_env_template,
 )
+from vrp_hunt.recon.passive_expansion import (
+    PassiveExpansionRecord,
+    PassiveExpansionReport,
+    PassiveExpansionSource,
+    build_passive_expansion_report,
+    build_reverse_ct_expansion_report,
+    load_certificate_transparency_records,
+    load_reverse_ip_records,
+    passive_expansion_assets,
+)
+from vrp_hunt.recon.permutations import (
+    PermutationStrategy,
+    SubdomainPermutationCandidate,
+    SubdomainPermutationConfig,
+    SubdomainPermutationReport,
+    generate_subdomain_permutations,
+    load_words,
+    subdomain_permutation_assets,
+)
+from vrp_hunt.recon.recursive_passive import (
+    RecursivePassiveCandidate,
+    RecursivePassiveConfig,
+    RecursivePassivePlan,
+    build_recursive_passive_plan,
+    recursive_passive_assets,
+)
 from vrp_hunt.recon.scoring import (
     AssetScore,
     AssetScoreReport,
@@ -33,6 +94,16 @@ from vrp_hunt.recon.scoring import (
 )
 from vrp_hunt.recon.scheduler import AsyncPoliteScheduler, GateDeniedError
 from vrp_hunt.recon.store import AssetStore
+from vrp_hunt.recon.wildcard_dns import (
+    WildcardDnsAssetDecision,
+    WildcardDnsFilterReport,
+    WildcardDnsPattern,
+    WildcardDnsProbe,
+    detect_wildcard_dns_patterns,
+    filter_wildcard_dns_assets,
+    wildcard_probe_from_asset,
+    wildcard_probe_from_spec,
+)
 from vrp_hunt.recon.wrappers import HttpxTransport, NucleiCommandBuilder, NucleiTemplatePolicy
 
 __all__ = [
@@ -44,11 +115,26 @@ __all__ = [
     "AssetScoreReport",
     "AssetScoringProfile",
     "AssetStore",
+    "AsnNetblockRecord",
+    "AsnNetblockReport",
+    "AsnNetblockSummary",
     "AsyncPoliteScheduler",
+    "CdnWafFingerprint",
+    "CdnWafFingerprintReport",
+    "CdnWafSignal",
+    "DigQueryType",
+    "DnsRecord",
+    "DnsRecordCollection",
+    "DnsRecordPlan",
+    "DnsRecordQuery",
+    "DnsRecordType",
     "GateDeniedError",
     "HttpRequest",
     "HttpResponse",
     "HttpxTransport",
+    "HistoricalUrlIngestionReport",
+    "HistoricalUrlRecord",
+    "HistoricalUrlSource",
     "NucleiCommandBuilder",
     "NucleiTemplatePolicy",
     "DEFAULT_PASSIVE_SOURCE_CATALOG_PATH",
@@ -59,14 +145,54 @@ __all__ = [
     "PassiveSourceHealth",
     "PassiveSourceHealthReport",
     "PassiveSourceStatusValue",
+    "PassiveExpansionRecord",
+    "PassiveExpansionReport",
+    "PassiveExpansionSource",
+    "PermutationStrategy",
+    "RecursivePassiveCandidate",
+    "RecursivePassiveConfig",
+    "RecursivePassivePlan",
     "ReconAdapter",
     "ReconContext",
     "ReconEngine",
     "ReconRunResult",
     "ReconScope",
+    "WildcardDnsAssetDecision",
+    "WildcardDnsFilterReport",
+    "WildcardDnsPattern",
+    "WildcardDnsProbe",
+    "asn_netblock_assets",
+    "asn_netblock_record_from_spec",
+    "build_asn_netblock_report",
+    "build_dns_record_plan",
+    "build_passive_expansion_report",
+    "build_recursive_passive_plan",
+    "build_reverse_ct_expansion_report",
+    "cdn_waf_fingerprint_assets",
+    "detect_wildcard_dns_patterns",
     "evaluate_passive_source_health",
+    "fingerprint_cdn_waf",
+    "filter_wildcard_dns_assets",
+    "generate_subdomain_permutations",
+    "historical_url_assets",
+    "import_dns_record_files",
+    "ingest_historical_url_files",
+    "load_asn_netblock_records",
+    "load_certificate_transparency_records",
+    "load_historical_url_records",
     "load_passive_source_catalog",
+    "load_reverse_ip_records",
+    "load_words",
     "passive_source_env_template",
+    "passive_expansion_assets",
+    "parse_dig_records",
+    "recursive_passive_assets",
     "score_asset",
     "score_assets",
+    "subdomain_permutation_assets",
+    "SubdomainPermutationCandidate",
+    "SubdomainPermutationConfig",
+    "SubdomainPermutationReport",
+    "wildcard_probe_from_asset",
+    "wildcard_probe_from_spec",
 ]

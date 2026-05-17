@@ -159,6 +159,99 @@ uv run vrp-hunt asset-score \
   --output artifacts/recon-depth/asset-scores.json
 ```
 
+Eliminate saved wildcard DNS noise using pre-resolved nonexistent-host probes:
+
+```bash
+uv run vrp-hunt wildcard-dns-filter \
+  --asset-file artifacts/dns/assets.jsonl \
+  --probe "probe-one.google.com=203.0.113.10" \
+  --probe "probe-two.google.com=203.0.113.10" \
+  --assets-output artifacts/dns/filtered-assets.jsonl
+```
+
+Build DNS collection commands and import saved `dig +short` output for CNAME,
+MX, TXT, NS, CAA, SPF, and DMARC records:
+
+```bash
+uv run vrp-hunt dns-record-plan \
+  --domain google.com \
+  --output artifacts/dns/dns-plan.json
+
+uv run vrp-hunt dns-record-import \
+  --domain google.com \
+  --record "google.com:MX=artifacts/dns/google-mx.txt" \
+  --record "google.com:TXT=artifacts/dns/google-txt.txt" \
+  --record "_dmarc.google.com:TXT=artifacts/dns/google-dmarc.txt" \
+  --output artifacts/dns/dns-records.json
+```
+
+Fingerprint CDN/WAF providers from saved HTTP and DNS metadata:
+
+```bash
+uv run vrp-hunt cdn-waf-fingerprint \
+  --asset-file artifacts/recon-depth/assets.jsonl \
+  --dns-records artifacts/dns/dns-records.json \
+  --output artifacts/recon-depth/cdn-waf-fingerprints.json \
+  --assets-output artifacts/recon-depth/cdn-waf-assets.jsonl
+```
+
+Normalize ASN and owned netblock records without expanding individual IPs:
+
+```bash
+uv run vrp-hunt asn-netblock-import \
+  --record "AS15169:Google LLC=8.8.8.0/24" \
+  --record "AS15169:Google LLC=2001:4860::/32" \
+  --output artifacts/netblocks/asn-netblocks.json \
+  --assets-output artifacts/netblocks/asn-netblock-assets.jsonl
+```
+
+Import saved reverse-IP and certificate-transparency exports into scoped host
+assets:
+
+```bash
+uv run vrp-hunt reverse-ct-import \
+  --reverse-ip artifacts/passive/reverse-ip.json \
+  --ct artifacts/passive/ct.json \
+  --scope-domain google.com \
+  --output artifacts/passive/reverse-ct-report.json \
+  --assets-output artifacts/passive/reverse-ct-assets.jsonl
+```
+
+Generate capped subdomain permutation candidates without resolving them:
+
+```bash
+uv run vrp-hunt subdomain-permute \
+  --seed accounts.google.com \
+  --scope-domain google.com \
+  --word admin \
+  --word login \
+  --max-candidates 50 \
+  --assets-output artifacts/passive/permutation-assets.jsonl
+```
+
+Plan capped recursive passive subdomain discovery from saved host assets:
+
+```bash
+uv run vrp-hunt recursive-passive-plan \
+  --asset-file artifacts/passive/reverse-ct-assets.jsonl \
+  --seed-domain google.com \
+  --min-hosts-per-zone 2 \
+  --output artifacts/passive/recursive-passive-plan.json
+```
+
+Import saved historical URLs from Wayback, urlscan, and Common Crawl with query
+values redacted:
+
+```bash
+uv run vrp-hunt historical-url-import \
+  --wayback artifacts/history/wayback-cdx.json \
+  --urlscan artifacts/history/urlscan.json \
+  --common-crawl artifacts/history/common-crawl.jsonl \
+  --scope-domain google.com \
+  --output artifacts/history/historical-url-report.json \
+  --assets-output artifacts/history/historical-url-assets.jsonl
+```
+
 Mine saved HTML or JavaScript content for scoped, redacted endpoint assets:
 
 ```bash

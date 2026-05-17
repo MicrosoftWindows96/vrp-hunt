@@ -69,9 +69,14 @@ def test_parse_amass_text() -> None:
 def test_parse_httpx_jsonl() -> None:
     assets = parse_httpx_jsonl(
         '{"url":"https://www.google.com/","status_code":200,'
-        '"title":"Google","technologies":["GFE"]}\n'
+        '"title":"Google","technologies":["GFE"],'
+        '"headers":{"cf-ray":"abc","server":"cloudflare"},'
+        '"cdn_name":"cloudflare","cdn_type":"cdn"}\n'
     )
     assert {asset.kind for asset in assets} == {"url", "host", "technology"}
+    url_asset = next(asset for asset in assets if asset.kind == "url")
+    assert url_asset.metadata["header:cf-ray"] == "abc"
+    assert url_asset.metadata["cdn_name"] == "cloudflare"
 
 
 def test_parse_katana_jsonl() -> None:

@@ -1818,6 +1818,355 @@ def test_asset_score_cli_writes_output(tmp_path: Path) -> None:
     assert output["scores"][0]["asset"]["value"] == "www.google.com"
 
 
+def test_wildcard_dns_filter_cli_writes_filtered_assets(tmp_path: Path) -> None:
+    from vrp_hunt.recon import Asset
+
+    asset_file = tmp_path / "assets.jsonl"
+    output_path = tmp_path / "wildcard-report.json"
+    filtered_path = tmp_path / "filtered-assets.jsonl"
+    assets = [
+        Asset(
+            kind="host",
+            value="www.google.com",
+            source="dns",
+            metadata={"addresses": "142.250.1.1"},
+        ),
+        Asset(
+            kind="host",
+            value="random-looking.google.com",
+            source="dns",
+            metadata={"addresses": "203.0.113.10"},
+        ),
+    ]
+    asset_file.write_text(
+        "\n".join(asset.model_dump_json() for asset in assets) + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "wildcard-dns-filter",
+            "--asset-file",
+            str(asset_file),
+            "--probe",
+            "probe-one.google.com=203.0.113.10",
+            "--probe",
+            "probe-two.google.com=203.0.113.10",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(filtered_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert output["patterns"][0]["domain"] == "google.com"
+    assert output["eliminated_assets"][0]["value"] == "random-looking.google.com"
+    assert "random-looking.google.com" not in filtered_path.read_text(encoding="utf-8")
+
+
+def test_dns_record_plan_and_import_cli_write_outputs(tmp_path: Path) -> None:
+    plan_path = tmp_path / "dns-plan.json"
+    records_path = tmp_path / "dns-records.json"
+    mx_path = tmp_path / "mx.txt"
+    txt_path = tmp_path / "txt.txt"
+    mx_path.write_text("10 smtp.google.com.\n", encoding="utf-8")
+    txt_path.write_text('"v=spf1 include:_spf.google.com ~all"\n', encoding="utf-8")
+
+    plan_exit = main(
+        [
+            "dns-record-plan",
+            "--domain",
+            "google.com",
+            "--output",
+            str(plan_path),
+        ]
+    )
+    import_exit = main(
+        [
+            "dns-record-import",
+            "--domain",
+            "google.com",
+            "--record",
+            f"google.com:MX={mx_path}",
+            "--record",
+            f"google.com:TXT={txt_path}",
+            "--output",
+            str(records_path),
+        ]
+    )
+
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    records = json.loads(records_path.read_text(encoding="utf-8"))
+
+    assert plan_exit == 0
+    assert import_exit == 0
+    assert ["dig", "+short", "TXT", "_dmarc.google.com"] in [
+        query["command"] for query in plan["queries"]
+    ]
+    assert [record["record_type"] for record in records["records"]] == ["MX", "SPF"]
+
+
+def test_cdn_waf_fingerprint_cli_writes_report_and_assets(tmp_path: Path) -> None:
+    from vrp_hunt.recon import Asset, DnsRecord, DnsRecordCollection
+
+    asset_file = tmp_path / "assets.jsonl"
+    dns_path = tmp_path / "dns-records.json"
+    output_path = tmp_path / "cdn-waf.json"
+    assets_path = tmp_path / "cdn-waf-assets.jsonl"
+    asset_file.write_text(
+        Asset(
+            kind="url",
+            value="https://www.google.com/",
+            source="httpx",
+            metadata={"header:cf-ray": "abc", "webserver": "cloudflare"},
+        ).model_dump_json()
+        + "\n",
+        encoding="utf-8",
+    )
+    dns_path.write_text(
+        DnsRecordCollection(
+            domain="google.com",
+            records=[
+                DnsRecord(
+                    name="static.google.com",
+                    record_type="CNAME",
+                    value="d123.cloudfront.net",
+                    source="fixture",
+                )
+            ],
+        ).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "cdn-waf-fingerprint",
+            "--asset-file",
+            str(asset_file),
+            "--dns-records",
+            str(dns_path),
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert {item["provider"] for item in output["fingerprints"]} == {
+        "Cloudflare",
+        "Amazon CloudFront",
+    }
+    assert "cdn-waf-fingerprint" in assets_path.read_text(encoding="utf-8")
+
+
+def test_asn_netblock_import_cli_writes_report_and_assets(tmp_path: Path) -> None:
+    output_path = tmp_path / "netblocks.json"
+    assets_path = tmp_path / "netblock-assets.jsonl"
+
+    exit_code = main(
+        [
+            "asn-netblock-import",
+            "--record",
+            "AS15169:Google LLC=8.8.8.8/24",
+            "--record",
+            "AS15169:Google LLC=2001:4860::/32",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    assets_text = assets_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output["total_asns"] == 1
+    assert output["total_netblocks"] == 2
+    assert output["records"][0]["cidr"] == "8.8.8.0/24"
+    assert "asn-netblock:AS15169:8.8.8.0/24" in assets_text
+
+
+def test_reverse_ct_import_cli_writes_scoped_hosts(tmp_path: Path) -> None:
+    reverse_path = tmp_path / "reverse.json"
+    ct_path = tmp_path / "ct.json"
+    output_path = tmp_path / "reverse-ct.json"
+    assets_path = tmp_path / "reverse-ct-assets.jsonl"
+    reverse_path.write_text(
+        json.dumps(
+            [
+                {
+                    "ip": "203.0.113.10",
+                    "hosts": ["www.google.com", "not-in-scope.example"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    ct_path.write_text(
+        json.dumps([{"name_value": "*.mail.google.com\naccounts.google.com"}]),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "reverse-ct-import",
+            "--reverse-ip",
+            str(reverse_path),
+            "--ct",
+            str(ct_path),
+            "--scope-domain",
+            "google.com",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    assets_text = assets_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output["total_records"] == 3
+    assert {asset["value"] for asset in output["assets"]} == {
+        "accounts.google.com",
+        "mail.google.com",
+        "www.google.com",
+    }
+    assert "not-in-scope.example" not in assets_text
+
+
+def test_subdomain_permute_cli_writes_capped_candidates(tmp_path: Path) -> None:
+    output_path = tmp_path / "permutations.json"
+    assets_path = tmp_path / "permutation-assets.jsonl"
+    words_path = tmp_path / "words.txt"
+    words_path.write_text("admin\nlogin\n", encoding="utf-8")
+
+    exit_code = main(
+        [
+            "subdomain-permute",
+            "--seed",
+            "accounts.google.com",
+            "--scope-domain",
+            "google.com",
+            "--word-file",
+            str(words_path),
+            "--max-candidates",
+            "3",
+            "--max-per-seed",
+            "3",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    assets_text = assets_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output["total_candidates"] == 3
+    assert output["truncated"]
+    assert output["candidates"][0]["host"] == "admin.google.com"
+    assert "subdomain-permutation" in assets_text
+
+
+def test_recursive_passive_plan_cli_writes_followup_queue(tmp_path: Path) -> None:
+    from vrp_hunt.recon import Asset
+
+    asset_file = tmp_path / "hosts.jsonl"
+    output_path = tmp_path / "recursive-passive.json"
+    assets_path = tmp_path / "recursive-passive-assets.jsonl"
+    asset_file.write_text(
+        "\n".join(
+            [
+                Asset(kind="host", value="a.mail.google.com", source="fixture").model_dump_json(),
+                Asset(kind="host", value="b.mail.google.com", source="fixture").model_dump_json(),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "recursive-passive-plan",
+            "--asset-file",
+            str(asset_file),
+            "--seed-domain",
+            "google.com",
+            "--min-hosts-per-zone",
+            "2",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    assets_text = assets_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output["candidates"][0]["zone"] == "mail.google.com"
+    assert output["candidates"][0]["command"] == [
+        "subfinder",
+        "-d",
+        "mail.google.com",
+        "-oJ",
+        "-silent",
+    ]
+    assert "recursive-passive-plan" in assets_text
+
+
+def test_historical_url_import_cli_writes_scoped_assets(tmp_path: Path) -> None:
+    wayback_path = tmp_path / "wayback.json"
+    output_path = tmp_path / "historical-urls.json"
+    assets_path = tmp_path / "historical-assets.jsonl"
+    wayback_path.write_text(
+        json.dumps(
+            [
+                ["timestamp", "original", "mimetype", "statuscode"],
+                ["20260101000000", "https://accounts.google.com/profile?id=secret", "text/html", "200"],
+                ["20260101000001", "https://evil.com/path", "text/html", "200"],
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "historical-url-import",
+            "--wayback",
+            str(wayback_path),
+            "--scope-domain",
+            "google.com",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    assets_text = assets_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output["total_records"] == 1
+    assert output["records"][0]["url"] == "https://accounts.google.com/profile"
+    assert output["records"][0]["parameter_names"] == ["id"]
+    assert "secret" not in assets_text
+    assert "historical-url-import" in assets_text
+
+
 def test_endpoint_mine_cli_mines_saved_document(
     tmp_path: Path,
     capsys,  # type: ignore[no-untyped-def]
