@@ -69,6 +69,17 @@ def test_authorization_requires_liability_acknowledgement() -> None:
 def test_authorization_rejects_unapproved_tool() -> None:
     with pytest.raises(LiveReconAuthorizationError, match="approved"):
         authorize_live_recon(
+            tool="sqlmap",
+            operator_id="owner",
+            legal_liability_accepted=True,
+            policy=operator_policy(),
+            local_user="local-owner",
+        )
+
+
+def test_authorization_rejects_tool_not_allowed_by_operator_policy() -> None:
+    with pytest.raises(LiveReconAuthorizationError, match="not allowed"):
+        authorize_live_recon(
             tool="nuclei",
             operator_id="owner",
             legal_liability_accepted=True,

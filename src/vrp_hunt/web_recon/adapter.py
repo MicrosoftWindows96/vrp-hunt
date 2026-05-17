@@ -15,11 +15,10 @@ from vrp_hunt.recon import (
     ReconScope,
 )
 from vrp_hunt.recon.scheduler import GateDeniedError
-from vrp_hunt.web_recon.extractors import (
-    extract_endpoint_paths,
-    extract_javascript_urls,
-    extract_parameter_names,
-    extract_secret_notes,
+from vrp_hunt.web_recon.endpoint_mining import (
+    EndpointMiningConfig,
+    WebContentDocument,
+    mine_javascript_and_api_endpoints,
 )
 from vrp_hunt.web_recon.models import CommandRunner, WebReconConfig
 from vrp_hunt.web_recon.parsers import parse_amass_text, parse_httpx_jsonl, parse_subfinder_jsonl
@@ -135,19 +134,15 @@ class WebReconAdapter:
             _http_response_as_jsonl(url, response.status_code, response.headers),
             source="web-probe",
         )
-        assets.extend(self._extract_response_assets(url, response.text))
+        assets.extend(self._extract_response_assets(url, response.text, scope))
         return assets, None
 
-    def _extract_response_assets(self, url: str, text: str) -> list[Asset]:
-        assets: list[Asset] = []
-        for js_url in extract_javascript_urls(text, url):
-            assets.append(Asset(kind="javascript", value=js_url, source="html-script-src", parent=url))
-        for endpoint in extract_endpoint_paths(text):
-            assets.append(Asset(kind="endpoint", value=endpoint, source="content-extract", parent=url))
-        for parameter in extract_parameter_names(url, text):
-            assets.append(Asset(kind="parameter", value=parameter, source="content-extract", parent=url))
-        assets.extend(extract_secret_notes(text, parent=url))
-        return assets
+    def _extract_response_assets(self, url: str, text: str, scope: ReconScope) -> list[Asset]:
+        report = mine_javascript_and_api_endpoints(
+            [WebContentDocument(url=url, body=text, source="web-probe")],
+            config=EndpointMiningConfig(scope_domains=scope.seeds),
+        )
+        return report.assets
 
     def _candidate(self, raw_target: str, scope: ReconScope, *, kind: str) -> TargetCandidate:
         acquisition_date = self._acquisition_date(raw_target, scope)

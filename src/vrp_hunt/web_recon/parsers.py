@@ -6,6 +6,7 @@ import json
 from urllib.parse import urlsplit
 
 from vrp_hunt.recon import Asset
+from vrp_hunt.recon.models import AssetKind
 
 
 def parse_subfinder_jsonl(output: str, *, source: str = "subfinder") -> list[Asset]:
@@ -75,6 +76,71 @@ def parse_httpx_jsonl(output: str, *, source: str = "httpx") -> list[Asset]:
     return assets
 
 
+def parse_katana_jsonl(output: str, *, source: str = "katana") -> list[Asset]:
+    assets: list[Asset] = []
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        url = _first_string(parsed, ["url", "endpoint", "request_url"])
+        if url is None:
+            continue
+        kind: AssetKind = "javascript" if urlsplit(url).path.lower().endswith(".js") else "endpoint"
+        assets.append(
+            Asset(
+                kind=kind,
+                value=url,
+                source=source,
+                metadata=_metadata(parsed, ["method", "source", "tag", "attribute"]),
+            )
+        )
+        host = urlsplit(url).hostname
+        if host:
+            assets.append(Asset(kind="host", value=host, source=source, parent=url))
+    return assets
+
+
+def parse_nuclei_jsonl(output: str, *, source: str = "nuclei") -> list[Asset]:
+    assets: list[Asset] = []
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        matched = _first_string(parsed, ["matched-at", "matched", "url", "host"])
+        template_id = _first_string(parsed, ["template-id", "templateID", "id"]) or "unknown-template"
+        info = parsed.get("info")
+        info_mapping = info if isinstance(info, dict) else {}
+        metadata = {
+            "template_id": template_id,
+            "severity": str(info_mapping.get("severity", "")),
+            "name": str(info_mapping.get("name", "")),
+        }
+        if matched:
+            assets.append(
+                Asset(
+                    kind="note",
+                    value=f"nuclei:{template_id}:{matched}",
+                    source=source,
+                    parent=matched,
+                    metadata=metadata,
+                )
+            )
+            host = urlsplit(matched).hostname
+            if host:
+                assets.append(Asset(kind="host", value=host, source=source, parent=matched))
+    return assets
+
+
 def _metadata(parsed: dict[object, object], keys: list[str]) -> dict[str, str]:
     metadata: dict[str, str] = {}
     for key in keys:
@@ -82,3 +148,11 @@ def _metadata(parsed: dict[object, object], keys: list[str]) -> dict[str, str]:
         if value is not None:
             metadata[key] = str(value)
     return metadata
+
+
+def _first_string(parsed: dict[object, object], keys: list[str]) -> str | None:
+    for key in keys:
+        value = parsed.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None

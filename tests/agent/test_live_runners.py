@@ -33,6 +33,21 @@ class FakeCommandRunner:
                 returncode=0,
                 stdout='{"url":"https://www.google.com","status_code":200,"webserver":"gfe"}\n',
             )
+        if command[0] == "katana":
+            return CommandResult(
+                command=list(command),
+                returncode=0,
+                stdout='{"url":"https://www.google.com/account","source":"href"}\n',
+            )
+        if command[0] == "nuclei":
+            return CommandResult(
+                command=list(command),
+                returncode=0,
+                stdout=(
+                    '{"template-id":"safe-template","matched-at":"https://www.google.com",'
+                    '"info":{"severity":"info","name":"safe"}}\n'
+                ),
+            )
         if command[0] == "jadx":
             return CommandResult(command=list(command), returncode=0, stdout="")
         return CommandResult(command=list(command), returncode=1, stderr="unsupported")
@@ -47,7 +62,7 @@ def operator_policy() -> LiveReconOperatorPolicy:
     return LiveReconOperatorPolicy(
         authorized_operator_id="owner",
         authorized_local_user="local-owner",
-        allowed_tools=["subfinder", "httpx", "jadx"],
+        allowed_tools=["subfinder", "httpx", "katana", "nuclei", "jadx"],
         require_liability_ack=True,
     )
 
@@ -144,6 +159,81 @@ def test_live_runner_executes_jadx_without_traffic() -> None:
     assert observation.success
     assert observation.request_count == 0
     assert command_runner.commands[0] == ["jadx", "-d", "out/jadx", "app.apk"]
+
+
+def test_live_runner_executes_katana_scoped_crawl() -> None:
+    command_runner = FakeCommandRunner()
+    action = AgentAction(
+        action_type="low_volume_probe",
+        target_kind="url",
+        target="https://www.google.com",
+        intended_action="recon",
+        description="Scoped crawl.",
+        sends_traffic=True,
+        request_budget=5,
+        metadata={
+            "tool": "katana",
+            "rate_limit_per_minute": "5",
+            "depth": "1",
+            "field_scope": "fqdn",
+        },
+    )
+
+    observation = live_runner(command_runner).run(action)
+
+    assert observation.success
+    assert observation.assets[0].kind == "endpoint"
+    assert command_runner.commands[0][0] == "katana"
+    assert "-sr" not in command_runner.commands[0]
+    assert "-rlm" in command_runner.commands[0]
+
+
+def test_live_runner_executes_nuclei_with_explicit_template() -> None:
+    command_runner = FakeCommandRunner()
+    action = AgentAction(
+        action_type="low_volume_probe",
+        target_kind="url",
+        target="https://www.google.com",
+        intended_action="recon",
+        description="Explicit template check.",
+        sends_traffic=True,
+        request_budget=3,
+        metadata={
+            "tool": "nuclei",
+            "nuclei_templates": "safe/http/title.yaml",
+            "nuclei_tags": "exposure",
+            "nuclei_severity": "info",
+            "rate_limit_per_second": "1",
+        },
+    )
+
+    observation = live_runner(command_runner).run(action)
+
+    assert observation.success
+    assert observation.assets[0].metadata["template_id"] == "safe-template"
+    assert command_runner.commands[0][0] == "nuclei"
+    assert "safe/http/title.yaml" in command_runner.commands[0]
+    assert "-j" in command_runner.commands[0]
+    assert "-ni" in command_runner.commands[0]
+    assert "-pt" in command_runner.commands[0]
+
+
+def test_live_runner_rejects_nuclei_without_template() -> None:
+    action = AgentAction(
+        action_type="low_volume_probe",
+        target_kind="url",
+        target="https://www.google.com",
+        intended_action="recon",
+        description="Template-less check.",
+        sends_traffic=True,
+        request_budget=1,
+        metadata={"tool": "nuclei"},
+    )
+
+    observation = live_runner(FakeCommandRunner()).run(action)
+
+    assert not observation.success
+    assert "explicit templates" in observation.notes[0]
 
 
 def test_live_runner_blocks_unauthorized_operator_before_command() -> None:

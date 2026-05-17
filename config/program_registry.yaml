@@ -1,0 +1,130 @@
+version: "program-registry-2026-05-16"
+programs:
+  - id: "google-alphabet-vrp"
+    name: "Google and Alphabet Vulnerability Reward Program"
+    platform: "Google Bug Hunters"
+    policy_url: "https://bughunters.google.com/"
+    captured_date: 2026-05-16
+    safe_harbor:
+      summary: "Authorized research must stay inside listed Google/Alphabet scope, use only researcher-owned accounts and data, avoid disruption, and follow the program rules."
+      source_reference: "google-alphabet-vrp-rules.md: Reporting, Legal"
+      researcher_requirements:
+        - "Only target researcher-owned accounts and researcher-created test data."
+        - "Do not access third-party data."
+        - "Do not run disruptive, damaging, high-volume, spam, social-engineering, phishing, or DoS testing."
+        - "Submit technical vulnerability reports through Google Bug Hunters."
+    rate_limit:
+      global_max_rps: 0.5
+      per_host_max_rps: 0.2
+      burst_size: 1
+      retry_budget: 3
+      backoff_base_seconds: 1.0
+      backoff_cap_seconds: 60.0
+      retry_strategy: "full_jitter"
+      require_single_flight: true
+      honor_robots_txt: true
+      honor_retry_after: true
+      user_agent_contact: "set-contact-before-live-traffic"
+    scope:
+      - id: "google-web"
+        kind: "domain"
+        value: "google.com"
+        reward_eligible: true
+        notes: "Google web service in VRP scope."
+        source_reference: "google-alphabet-vrp-rules.md: Scope *.google.com"
+      - id: "youtube-web"
+        kind: "domain"
+        value: "youtube.com"
+        reward_eligible: true
+        notes: "YouTube web service in VRP scope."
+        source_reference: "google-alphabet-vrp-rules.md: Scope *.youtube.com"
+      - id: "blogger-web"
+        kind: "domain"
+        value: "blogger.com"
+        reward_eligible: true
+        notes: "Blogger web service in VRP scope."
+        source_reference: "google-alphabet-vrp-rules.md: Scope *.blogger.com"
+      - id: "deepmind-web"
+        kind: "domain"
+        value: "deepmind.com"
+        reward_eligible: true
+        notes: "DeepMind web service in VRP scope."
+        source_reference: "google-alphabet-vrp-rules.md: Scope *.deepmind.com"
+      - id: "waymo-web"
+        kind: "domain"
+        value: "waymo.com"
+        reward_eligible: true
+        notes: "Waymo web service in VRP scope."
+        source_reference: "google-alphabet-vrp-rules.md: Scope *.waymo.com"
+      - id: "wing-web"
+        kind: "domain"
+        value: "wing.com"
+        reward_eligible: true
+        notes: "Wing web service in VRP scope."
+        source_reference: "google-alphabet-vrp-rules.md: Scope *.wing.com"
+      - id: "withgoogle-acquisition"
+        kind: "domain"
+        value: "withgoogle.com"
+        reward_eligible: true
+        notes: "Acquisition domain; separate blackout handling remains enforced by guardrail rules."
+        source_reference: "google-alphabet-vrp-rules.md: Recent acquisitions"
+      - id: "withyoutube-acquisition"
+        kind: "domain"
+        value: "withyoutube.com"
+        reward_eligible: true
+        notes: "Acquisition domain; separate blackout handling remains enforced by guardrail rules."
+        source_reference: "google-alphabet-vrp-rules.md: Recent acquisitions"
+      - id: "google-mobile-publisher"
+        kind: "mobile_publisher"
+        value: "Google LLC"
+        reward_eligible: true
+        notes: "Google-developed mobile app."
+        source_reference: "google-alphabet-vrp-rules.md: Scope Google-developed apps"
+      - id: "waymo-mobile-publisher"
+        kind: "mobile_publisher"
+        value: "Waymo LLC"
+        reward_eligible: true
+        notes: "Waymo-developed mobile app."
+        source_reference: "google-alphabet-vrp-rules.md: Scope Waymo-developed apps"
+    exclusions:
+      - id: "cloud-bc-googleusercontent"
+        kind: "host_suffix"
+        value: "bc.googleusercontent.com"
+        reason: "Cloud customer apps are not authorized under this VRP."
+        source_reference: "google-alphabet-vrp-rules.md: Non-qualifying *.bc.googleusercontent.com"
+      - id: "appspot-customer-app"
+        kind: "host_suffix"
+        value: "appspot.com"
+        reason: "Appspot customer apps are not authorized under this VRP."
+        source_reference: "google-alphabet-vrp-rules.md: Non-qualifying *.appspot.com"
+      - id: "blogspot-owner-javascript"
+        kind: "host_suffix"
+        value: "blogspot.com"
+        reason: "Owner-supplied JavaScript on Blogspot is non-qualifying."
+        source_reference: "google-alphabet-vrp-rules.md: Owner-supplied JS in Blogger"
+    reward_tiers:
+      - id: "s0-rce"
+        label: "RCE or equivalent critical server-side impact"
+        min_usd: 1337.0
+        max_usd: 101010.0
+        notes: "Amount depends on domain tier and final panel discretion."
+      - id: "s1-file-db-access"
+        label: "Unrestricted file or database access"
+        min_usd: 1337.0
+        max_usd: 75000.0
+        notes: "Amount depends on domain tier and final panel discretion."
+      - id: "s2-authz-logic"
+        label: "Authentication, authorization, or logic flaw"
+        min_usd: 200.0
+        max_usd: 50000.0
+        notes: "Includes IDOR and remote user impersonation classes."
+      - id: "c0-client-code-execution"
+        label: "Client-side code execution such as XSS"
+        min_usd: 200.0
+        max_usd: 20000.0
+        notes: "Amount depends on domain tier and final panel discretion."
+      - id: "c1-other-client-or-info"
+        label: "Other client, info leak, CSRF, XSLeak, or clickjacking impact"
+        min_usd: 100.0
+        max_usd: 15000.0
+        notes: "Amount depends on domain tier and final panel discretion."

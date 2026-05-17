@@ -14,8 +14,11 @@ or tests that make live network requests.
 
 - `vrp_hunt.guardrails`: scope normalization, policy checks, audit data, and
   conservative rate-limit contracts.
+- `vrp_hunt.programs`: bug bounty program registry loading, scope matching,
+  reward metadata, safe-harbor summaries, exclusions, and rate-limit records.
 - `vrp_hunt.recon`: shared recon models, asset inventory storage, adapters,
-  scheduling, and safe wrapper surfaces for HTTPX and nuclei command creation.
+  scheduling, passive source readiness checks, and safe wrapper surfaces for
+  HTTPX and nuclei command creation.
 - `vrp_hunt.web_recon`: passive web recon parsing, guarded host filtering, polite
   probing, JavaScript URL extraction, endpoint extraction, technology notes, and
   redacted potential-secret notes.
@@ -93,6 +96,64 @@ Build an offline plan:
 uv run vrp-hunt agent-plan \
   --asset url:https://accounts.google.com/profile \
   --mode offline
+```
+
+Check a target against the configured program registry:
+
+```bash
+uv run vrp-hunt program-match \
+  --target https://accounts.google.com/
+```
+
+Compare two program registry snapshots and show fresh reward-eligible scope:
+
+```bash
+uv run vrp-hunt program-diff \
+  --old-registry old-program-registry.yaml \
+  --new-registry config/program_registry.yaml \
+  --fresh-only
+```
+
+Run a declarative recon workflow:
+
+```bash
+uv run vrp-hunt recon-workflow \
+  --workflow workflows/google-recon.yaml \
+  --operator-id "$VRP_HUNT_OPERATOR_ID" \
+  --accept-legal-liability
+```
+
+Check passive recon source readiness without printing secret values:
+
+```bash
+uv run vrp-hunt passive-sources
+uv run vrp-hunt passive-sources-env-template --output .env.passive.example
+```
+
+Score existing recon assets by confidence, freshness, and priority:
+
+```bash
+uv run vrp-hunt asset-score \
+  --asset-file artifacts/recon-depth/assets.jsonl \
+  --output artifacts/recon-depth/asset-scores.json
+```
+
+Mine saved HTML or JavaScript content for scoped, redacted endpoint assets:
+
+```bash
+uv run vrp-hunt endpoint-mine \
+  --document "https://www.google.com/=artifacts/pages/www-google.html" \
+  --scope-domain google.com \
+  --assets-output artifacts/endpoint-mine/assets.jsonl
+```
+
+Build safe validator actions from saved owned-account page snapshots:
+
+```bash
+uv run vrp-hunt owned-crawl-plan \
+  --page "owned-a=https://docs.google.com/document/d/owned/edit=artifacts/owned/pages/doc.html" \
+  --scope-domain google.com \
+  --plan-output artifacts/owned/validation-plan.json
 ```
 
 Execute safe non-traffic handlers:

@@ -19,12 +19,15 @@ from vrp_hunt.agent.executor import RegisteredActionRunner
 from vrp_hunt.agent.models import AgentAction, AgentObservation
 from vrp_hunt.playbooks import get_playbook
 from vrp_hunt.playbooks.models import BugClass
-from vrp_hunt.recon import Asset
+from vrp_hunt.recon import Asset, NucleiCommandBuilder, NucleiTemplatePolicy
 from vrp_hunt.web_recon import (
     CommandResult,
     build_httpx_command,
+    build_katana_command,
     build_subfinder_command,
     parse_httpx_jsonl,
+    parse_katana_jsonl,
+    parse_nuclei_jsonl,
     parse_subfinder_jsonl,
 )
 from vrp_hunt.mobile_recon import build_jadx_command
@@ -355,6 +358,10 @@ class LiveReconRunner(RegisteredActionRunner):
 
     def _low_volume_probe(self, action: AgentAction) -> AgentObservation:
         tool = action.metadata.get("tool", "httpx")
+        if tool == "katana":
+            return self._crawl_with_katana(action)
+        if tool == "nuclei":
+            return self._scan_with_nuclei(action)
         if tool != "httpx":
             return AgentObservation(
                 action_id=action.action_id,
@@ -397,9 +404,120 @@ class LiveReconRunner(RegisteredActionRunner):
             request_count=max(1, min(action.request_budget, len(assets) or 1)),
         )
 
+    def _crawl_with_katana(self, action: AgentAction) -> AgentObservation:
+        targets_file = action.metadata.get("targets_file")
+        cleanup_path = None
+        if targets_file is None:
+            targets_file, cleanup_path = _single_target_file(action.target)
+        try:
+            result = _run_async(
+                self.command_runner.run(
+                    build_katana_command(
+                        targets_file,
+                        depth=_int_metadata(action, "depth", 1),
+                        rate_limit_per_minute=_int_metadata(
+                            action,
+                            "rate_limit_per_minute",
+                            self.default_httpx_rate_limit_per_minute,
+                        ),
+                        field_scope=action.metadata.get("field_scope", "fqdn"),
+                        js_crawl=action.metadata.get("js_crawl") == "true",
+                        known_files=action.metadata.get("known_files"),
+                        crawl_duration_seconds=_int_metadata(action, "crawl_duration_seconds", 30),
+                    )
+                )
+            )
+        finally:
+            if cleanup_path is not None:
+                cleanup_path.unlink(missing_ok=True)
+        assets = parse_katana_jsonl(result.stdout) if result.returncode == 0 else []
+        notes = [f"katana crawl completed for {action.target}"]
+        if result.returncode != 0:
+            notes.append(f"katana exit code={result.returncode}")
+        if result.returncode != 0 and result.stderr:
+            notes.append(result.stderr)
+        return AgentObservation(
+            action_id=action.action_id,
+            success=result.returncode == 0,
+            notes=notes,
+            assets=assets,
+            request_count=max(1, min(action.request_budget, len(assets) or 1)),
+        )
+
+    def _scan_with_nuclei(self, action: AgentAction) -> AgentObservation:
+        templates = _list_metadata(action, "nuclei_templates")
+        if not templates:
+            return AgentObservation(
+                action_id=action.action_id,
+                success=False,
+                notes=["nuclei requires explicit templates"],
+                request_count=0,
+            )
+        try:
+            policy = NucleiTemplatePolicy(
+                templates=templates,
+                tags=_list_metadata(action, "nuclei_tags"),
+                severity=_list_metadata(action, "nuclei_severity"),
+                protocol_types=["http"],
+            )
+        except ValueError as exc:
+            return AgentObservation(
+                action_id=action.action_id,
+                success=False,
+                notes=[f"nuclei policy rejected scan: {exc}"],
+                request_count=0,
+            )
+        targets_file = action.metadata.get("targets_file")
+        cleanup_path = None
+        if targets_file is None:
+            targets_file, cleanup_path = _single_target_file(action.target)
+        try:
+            result = _run_async(
+                self.command_runner.run(
+                    NucleiCommandBuilder(policy=policy).build(
+                        targets_file,
+                        rate_limit=float(_int_metadata(action, "rate_limit_per_second", 1)),
+                    )
+                )
+            )
+        finally:
+            if cleanup_path is not None:
+                cleanup_path.unlink(missing_ok=True)
+        assets = parse_nuclei_jsonl(result.stdout) if result.returncode == 0 else []
+        notes = [f"nuclei scan completed for {action.target}"]
+        if result.returncode != 0:
+            notes.append(f"nuclei exit code={result.returncode}")
+        if result.returncode != 0 and result.stderr:
+            notes.append(result.stderr)
+        return AgentObservation(
+            action_id=action.action_id,
+            success=result.returncode == 0,
+            notes=notes,
+            assets=assets,
+            request_count=max(1, min(action.request_budget, len(assets) or 1)),
+        )
+
 
 def _run_async(coro: Coroutine[Any, Any, CommandResult]) -> CommandResult:
     return asyncio.run(coro)
+
+
+def _single_target_file(target: str) -> tuple[str, Path]:
+    with NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
+        handle.write(f"{target}\n")
+        return handle.name, Path(handle.name)
+
+
+def _int_metadata(action: AgentAction, key: str, default: int) -> int:
+    value = action.metadata.get(key)
+    if value is None:
+        return default
+    return int(value)
+
+
+def _list_metadata(action: AgentAction, key: str) -> list[str]:
+    value = action.metadata.get(key, "")
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 def _subfinder_observation(action: AgentAction, result: CommandResult) -> AgentObservation:

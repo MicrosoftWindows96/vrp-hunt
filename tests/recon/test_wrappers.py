@@ -43,6 +43,13 @@ def test_nuclei_policy_requires_explicit_templates() -> None:
 def test_nuclei_policy_blocks_aggressive_tags() -> None:
     with pytest.raises(ValidationError):
         NucleiTemplatePolicy(templates=["safe/http/title.yaml"], tags=["dos"])
+    with pytest.raises(ValidationError):
+        NucleiTemplatePolicy(templates=["safe/http/title.yaml"], tags=["dast"])
+
+
+def test_nuclei_policy_blocks_non_http_protocols() -> None:
+    with pytest.raises(ValidationError):
+        NucleiTemplatePolicy(templates=["safe/http/title.yaml"], protocol_types=["tcp"])
 
 
 def test_nuclei_command_builder_outputs_args_without_running() -> None:
@@ -53,3 +60,7 @@ def test_nuclei_command_builder_outputs_args_without_running() -> None:
     assert "targets.txt" in command
     assert "safe/http/title.yaml" in command
     assert "-rl" in command
+    assert "-j" in command
+    assert "-silent" in command
+    assert "-ni" in command
+    assert command[-2:] == ["-pt", "http"]

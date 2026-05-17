@@ -11,8 +11,14 @@ from pydantic import Field, ValidationError, field_validator
 
 from vrp_hunt.guardrails.models import StrictModel
 
-ApprovedLiveTool = Literal["subfinder", "httpx", "jadx"]
-APPROVED_LIVE_TOOLS: tuple[ApprovedLiveTool, ...] = ("subfinder", "httpx", "jadx")
+ApprovedLiveTool = Literal["subfinder", "httpx", "katana", "nuclei", "jadx"]
+APPROVED_LIVE_TOOLS: tuple[ApprovedLiveTool, ...] = (
+    "subfinder",
+    "httpx",
+    "katana",
+    "nuclei",
+    "jadx",
+)
 MAX_OPERATOR_POLICY_BYTES = 32_000
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_OPERATOR_POLICY_PATH = REPO_ROOT / "config" / "operator_policy.yaml"

@@ -35,6 +35,44 @@ def build_httpx_command(targets_file: str | Path, *, rate_limit_per_minute: int)
     ]
 
 
+def build_katana_command(
+    targets_file: str | Path,
+    *,
+    depth: int = 1,
+    rate_limit_per_minute: int = 30,
+    field_scope: str = "fqdn",
+    js_crawl: bool = False,
+    known_files: str | None = None,
+    crawl_duration_seconds: int = 30,
+) -> list[str]:
+    if depth < 0:
+        raise ValueError("depth must be non-negative")
+    if rate_limit_per_minute <= 0:
+        raise ValueError("rate_limit_per_minute must be positive")
+    if crawl_duration_seconds <= 0:
+        raise ValueError("crawl_duration_seconds must be positive")
+    command = [
+        "katana",
+        "-list",
+        str(targets_file),
+        "-j",
+        "-silent",
+        "-d",
+        str(depth),
+        "-fs",
+        field_scope,
+        "-rlm",
+        str(rate_limit_per_minute),
+        "-ct",
+        f"{crawl_duration_seconds}s",
+    ]
+    if js_crawl:
+        command.append("-jc")
+    if known_files:
+        command.extend(["-kf", known_files])
+    return command
+
+
 class SubprocessCommandRunner:
     """Run allowlisted recon commands without shell expansion."""
 
@@ -43,7 +81,7 @@ class SubprocessCommandRunner:
         self.max_output_bytes = max_output_bytes
 
     async def run(self, command: Sequence[str], *, stdin: str | None = None) -> CommandResult:
-        if not command or command[0] not in {"subfinder", "amass", "httpx"}:
+        if not command or command[0] not in {"subfinder", "amass", "httpx", "katana", "nuclei"}:
             raise ValueError("unsupported command")
 
         proc = await asyncio.create_subprocess_exec(

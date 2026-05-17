@@ -1,0 +1,95 @@
+version: "passive-sources-2026-05-16"
+sources:
+  - id: "crtsh"
+    name: "crt.sh"
+    categories: ["certificate", "subdomain"]
+    enabled: true
+    tools: ["subfinder"]
+    notes: "Certificate transparency source; no local credential required."
+    source_reference: "Passive certificate transparency source"
+  - id: "wayback"
+    name: "Internet Archive Wayback"
+    categories: ["url"]
+    enabled: true
+    tools: ["wayback", "waymore"]
+    notes: "Historical URL source; no local credential required."
+    source_reference: "Passive historical URL source"
+  - id: "urlscan"
+    name: "urlscan.io"
+    categories: ["url", "search"]
+    enabled: true
+    optional_env: ["URLSCAN_API_KEY"]
+    tools: ["urlscan"]
+    notes: "Public lookups can work without a key; authenticated access may improve quotas."
+    source_reference: "Passive URL and search source"
+  - id: "github-code-search"
+    name: "GitHub Code Search"
+    categories: ["code", "subdomain", "url"]
+    enabled: true
+    required_env: ["GITHUB_TOKEN"]
+    tools: ["github_codesearch", "trufflehog", "gitleaks"]
+    notes: "Use only for public or owned organizations and repositories in scope."
+    source_reference: "Passive public code search source"
+  - id: "shodan"
+    name: "Shodan"
+    categories: ["search", "subdomain", "technology"]
+    enabled: true
+    required_env: ["SHODAN_API_KEY"]
+    tools: ["subfinder", "shodan"]
+    notes: "Internet search provider for passive asset context."
+    source_reference: "Passive internet search source"
+  - id: "censys"
+    name: "Censys"
+    categories: ["search", "certificate", "subdomain"]
+    enabled: true
+    required_env: ["CENSYS_API_ID", "CENSYS_API_SECRET"]
+    tools: ["subfinder", "censys"]
+    notes: "Internet search and certificate provider for passive asset context."
+    source_reference: "Passive internet search source"
+  - id: "securitytrails"
+    name: "SecurityTrails"
+    categories: ["subdomain", "certificate"]
+    enabled: true
+    required_env: ["SECURITYTRAILS_API_KEY"]
+    tools: ["subfinder", "securitytrails"]
+    notes: "Passive DNS and certificate source."
+    source_reference: "Passive DNS source"
+  - id: "virustotal"
+    name: "VirusTotal"
+    categories: ["subdomain", "url", "search"]
+    enabled: true
+    required_env: ["VT_API_KEY"]
+    tools: ["subfinder", "virustotal"]
+    notes: "Passive relationship and URL source."
+    source_reference: "Passive relationship source"
+  - id: "projectdiscovery-chaos"
+    name: "ProjectDiscovery Chaos"
+    categories: ["subdomain"]
+    enabled: true
+    required_env: ["CHAOS_KEY"]
+    tools: ["subfinder", "chaos"]
+    notes: "ProjectDiscovery passive subdomain source."
+    source_reference: "Passive subdomain source"
+  - id: "hunterio"
+    name: "Hunter.io"
+    categories: ["email", "subdomain"]
+    enabled: true
+    required_env: ["HUNTERIO_API_KEY"]
+    tools: ["hunterio"]
+    notes: "Passive email and domain intelligence source."
+    source_reference: "Passive email source"
+  - id: "builtwith"
+    name: "BuiltWith"
+    categories: ["technology", "subdomain"]
+    enabled: true
+    required_env: ["BUILTWITH_API_KEY"]
+    tools: ["builtwith"]
+    notes: "Passive technology and relationship source."
+    source_reference: "Passive technology source"
+  - id: "google-playstore"
+    name: "Google Play Store"
+    categories: ["mobile"]
+    enabled: true
+    tools: ["google_playstore"]
+    notes: "Passive mobile app metadata source; no local credential required."
+    source_reference: "Passive mobile metadata source"

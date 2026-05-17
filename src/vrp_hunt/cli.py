@@ -16,6 +16,7 @@ from vrp_hunt.agent import (
     AgentAction,
     AgentArtifactBundle,
     AgentPlan,
+    AgentRunResult,
     ApprovalGateError,
     ApprovalMode,
     ApprovedSubprocessRunner,
@@ -29,14 +30,21 @@ from vrp_hunt.agent import (
     LiveReconRunner,
     ModelProviderError,
     ModelProviderName,
+    OwnedAccountCrawlConfig,
+    OwnedAccountCrawlError,
+    OwnedAccountCrawlPage,
     OwnedBrowserScenarioError,
     OwnedObjectPipelineError,
     OwnedPermissionMatrixError,
+    ReconDepthError,
+    ReconDepthProfile,
+    ReconWorkflowError,
     apply_approval_gate,
     artifact_bundle_from_agent_run,
     artifact_bundle_from_derived_http_check,
     artifact_bundle_from_owned_browser_scenario,
     build_agent_brain,
+    build_owned_account_crawl_plan,
     build_agent_plan,
     cookie_header_from_env,
     build_offline_analysis_plan,
@@ -54,14 +62,36 @@ from vrp_hunt.agent import (
     run_owned_browser_scenario,
     run_owned_object_pipeline,
     run_owned_permission_matrix,
+    run_recon_depth,
+    load_recon_workflow,
+    run_recon_workflow,
     write_generated_owned_browser_scenarios,
     write_owned_permission_matrix_template,
     write_recon_iteration_outputs,
 )
 from vrp_hunt.agent.runners import build_safe_offline_runner, build_safe_validation_runner
+from vrp_hunt.guardrails.models import TargetKind
 from vrp_hunt.mobile_recon import build_mobile_static_report
-from vrp_hunt.recon import Asset
+from vrp_hunt.programs import (
+    ProgramRegistryLoadError,
+    diff_program_registries,
+    load_program_registry,
+    match_program_scope,
+)
+from vrp_hunt.recon import (
+    Asset,
+    PassiveSourceCatalogError,
+    evaluate_passive_source_health,
+    load_passive_source_catalog,
+    passive_source_env_template,
+    score_assets,
+)
 from vrp_hunt.reporting import Platform, render_markdown_report
+from vrp_hunt.web_recon import (
+    EndpointMiningConfig,
+    WebContentDocument,
+    mine_javascript_and_api_endpoints,
+)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -75,6 +105,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _agent_auto(args)
     if args.command == "recon-iterate":
         return _recon_iterate(args)
+    if args.command == "recon-depth":
+        return _recon_depth(args)
+    if args.command == "recon-workflow":
+        return _recon_workflow(args)
+    if args.command == "program-list":
+        return _program_list(args)
+    if args.command == "program-match":
+        return _program_match(args)
+    if args.command == "program-diff":
+        return _program_diff(args)
+    if args.command == "passive-sources":
+        return _passive_sources(args)
+    if args.command == "passive-sources-env-template":
+        return _passive_sources_env_template(args)
+    if args.command == "asset-score":
+        return _asset_score(args)
+    if args.command == "endpoint-mine":
+        return _endpoint_mine(args)
+    if args.command == "owned-crawl-plan":
+        return _owned_crawl_plan(args)
     if args.command == "owned-browser-check":
         return _owned_browser_check(args)
     if args.command == "owned-browser-scenario":
@@ -172,6 +222,162 @@ def build_parser() -> argparse.ArgumentParser:
     )
     iterate.add_argument("--limit", type=int, default=10, help="Maximum approval candidates to emit")
     iterate.add_argument("--output-dir", type=Path, help="Directory for ranked-targets and approval queue files")
+
+    depth = subparsers.add_parser(
+        "recon-depth",
+        help="Run a scoped multi-phase recon pipeline",
+    )
+    depth.add_argument("--domain", required=True, help="Root scoped domain, e.g. google.com")
+    depth.add_argument("--output-dir", type=Path, required=True)
+    depth.add_argument(
+        "--profile",
+        choices=("passive", "balanced", "deep", "owned-auth"),
+        default="balanced",
+    )
+    depth.add_argument("--max-hosts", type=int, default=25)
+    depth.add_argument("--max-urls", type=int, default=25)
+    depth.add_argument("--rate-limit-per-minute", type=int, default=5)
+    depth.add_argument("--katana-depth", type=int, default=1)
+    depth.add_argument("--katana-js-crawl", action="store_true")
+    depth.add_argument("--katana-known-files")
+    depth.add_argument("--katana-crawl-duration-seconds", type=int, default=30)
+    depth.add_argument(
+        "--template",
+        action="append",
+        default=[],
+        help="explicit relative nuclei template path; repeat for multiple templates",
+    )
+    depth.add_argument("--tag", action="append", default=[], help="nuclei tag filter")
+    depth.add_argument("--severity", action="append", default=[], help="nuclei severity filter")
+    depth.add_argument("--nuclei-rate-limit-per-second", type=int, default=1)
+    depth.add_argument("--max-validation-actions", type=int, default=20)
+    depth.add_argument("--max-live-requests", type=int, default=50)
+    depth.add_argument("--operator-policy", type=Path, default=None)
+    depth.add_argument("--operator-id", default=os.getenv("VRP_HUNT_OPERATOR_ID"))
+    depth.add_argument(
+        "--accept-legal-liability",
+        action="store_true",
+        help="Acknowledge that the configured operator is legally liable for this live run",
+    )
+
+    workflow = subparsers.add_parser(
+        "recon-workflow",
+        help="Run a scoped recon workflow YAML file",
+    )
+    workflow.add_argument("--workflow", type=Path, required=True)
+    workflow.add_argument("--max-live-requests", type=int, default=50)
+    workflow.add_argument("--operator-policy", type=Path, default=None)
+    workflow.add_argument("--operator-id", default=os.getenv("VRP_HUNT_OPERATOR_ID"))
+    workflow.add_argument(
+        "--accept-legal-liability",
+        action="store_true",
+        help="Acknowledge that the configured operator is legally liable for this live run",
+    )
+
+    program_list = subparsers.add_parser(
+        "program-list",
+        help="List configured bug bounty program registry entries",
+    )
+    program_list.add_argument("--registry", type=Path, default=None)
+
+    program_match = subparsers.add_parser(
+        "program-match",
+        help="Match one target against the bug bounty program registry",
+    )
+    program_match.add_argument("--target", required=True)
+    program_match.add_argument("--kind", choices=("host", "url", "mobile_app"), default=None)
+    program_match.add_argument("--publisher", help="Mobile app publisher for mobile_app targets")
+    program_match.add_argument("--registry", type=Path, default=None)
+
+    program_diff = subparsers.add_parser(
+        "program-diff",
+        help="Compare two bug bounty program registries for scope changes",
+    )
+    program_diff.add_argument("--old-registry", type=Path, required=True)
+    program_diff.add_argument("--new-registry", type=Path, required=True)
+    program_diff.add_argument(
+        "--fresh-only",
+        action="store_true",
+        help="Print only fresh reward-eligible scope targets",
+    )
+
+    passive_sources = subparsers.add_parser(
+        "passive-sources",
+        help="Report passive recon source readiness without printing secrets",
+    )
+    passive_sources.add_argument("--catalog", type=Path, default=None)
+    passive_sources.add_argument(
+        "--include-disabled",
+        action="store_true",
+        help="Include disabled sources in the health report",
+    )
+
+    passive_sources_env = subparsers.add_parser(
+        "passive-sources-env-template",
+        help="Print or write a blank env template for passive recon sources",
+    )
+    passive_sources_env.add_argument("--catalog", type=Path, default=None)
+    passive_sources_env.add_argument("--output", type=Path)
+
+    asset_score = subparsers.add_parser(
+        "asset-score",
+        help="Score recon assets by confidence, freshness, and priority",
+    )
+    _add_agent_inputs(asset_score)
+    asset_score.add_argument("--output", type=Path)
+
+    endpoint_mine = subparsers.add_parser(
+        "endpoint-mine",
+        help="Mine saved HTML/JS/API text for scoped JavaScript and endpoint assets",
+    )
+    endpoint_mine.add_argument(
+        "--document",
+        action="append",
+        default=[],
+        metavar="URL=PATH",
+        help="Saved document to mine; repeat for multiple documents",
+    )
+    endpoint_mine.add_argument(
+        "--scope-domain",
+        action="append",
+        default=[],
+        help="Allowed registrable domain or host; repeat for multiple scope roots",
+    )
+    endpoint_mine.add_argument(
+        "--include-third-party",
+        action="store_true",
+        help="Include absolute third-party URLs from saved content",
+    )
+    endpoint_mine.add_argument(
+        "--no-secret-notes",
+        action="store_true",
+        help="Disable redacted potential-secret pattern notes",
+    )
+    endpoint_mine.add_argument("--output", type=Path)
+    endpoint_mine.add_argument("--assets-output", type=Path, help="Optional JSONL asset output path")
+
+    owned_crawl = subparsers.add_parser(
+        "owned-crawl-plan",
+        help="Build safe validator actions from saved owned-account page snapshots",
+    )
+    owned_crawl.add_argument(
+        "--page",
+        action="append",
+        default=[],
+        metavar="ACCOUNT=URL=PATH",
+        help="Saved authenticated page snapshot; repeat for multiple pages",
+    )
+    owned_crawl.add_argument(
+        "--scope-domain",
+        action="append",
+        default=[],
+        help="Allowed registrable domain or host; repeat for multiple scope roots",
+    )
+    owned_crawl.add_argument("--max-links-per-page", type=int, default=100)
+    owned_crawl.add_argument("--max-forms-per-page", type=int, default=50)
+    owned_crawl.add_argument("--output", type=Path)
+    owned_crawl.add_argument("--assets-output", type=Path, help="Optional JSONL asset output path")
+    owned_crawl.add_argument("--plan-output", type=Path, help="Optional AgentPlan JSON output path")
 
     browser_check = subparsers.add_parser(
         "owned-browser-check",
@@ -424,12 +630,36 @@ def build_parser() -> argparse.ArgumentParser:
     mobile.add_argument("--output-dir", type=Path, help="Optional directory for mobile-static-report.json")
 
     live = subparsers.add_parser("live-recon", help="Run one approved live recon tool")
-    live.add_argument("--tool", choices=("subfinder", "httpx", "jadx"), required=True)
+    live.add_argument("--tool", choices=("subfinder", "httpx", "katana", "nuclei", "jadx"), required=True)
     live.add_argument("--target", required=True, help="Domain/host/URL, or mobile app id for jadx")
     live.add_argument("--artifact-path", help="APK path for jadx static analysis")
     live.add_argument("--output-dir", help="jadx output directory")
     live.add_argument("--publisher", help="Mobile app publisher for guardrail scope checks")
     live.add_argument("--rate-limit-per-minute", type=int, default=5)
+    live.add_argument("--depth", type=int, default=1, help="katana crawl depth")
+    live.add_argument("--field-scope", default="fqdn", help="katana scope field")
+    live.add_argument("--js-crawl", action="store_true", help="enable katana JavaScript crawling")
+    live.add_argument("--known-files", help="katana known-files mode, e.g. robotstxt,sitemapxml")
+    live.add_argument("--crawl-duration-seconds", type=int, default=30)
+    live.add_argument(
+        "--template",
+        action="append",
+        default=[],
+        help="explicit relative nuclei template path; repeat for multiple templates",
+    )
+    live.add_argument(
+        "--tag",
+        action="append",
+        default=[],
+        help="nuclei tag filter; aggressive tags are rejected by policy",
+    )
+    live.add_argument(
+        "--severity",
+        action="append",
+        default=[],
+        help="nuclei severity filter, e.g. info, low, medium, high, critical",
+    )
+    live.add_argument("--rate-limit-per-second", type=int, default=1, help="nuclei request rate limit")
     live.add_argument("--max-live-requests", type=int, default=1)
     live.add_argument("--operator-policy", type=Path, default=None)
     live.add_argument("--operator-id", default=os.getenv("VRP_HUNT_OPERATOR_ID"))
@@ -604,6 +834,261 @@ def _recon_iterate(args: argparse.Namespace) -> int:
         return 2
 
     print(summary.model_dump_json(indent=2))
+    return 0
+
+
+def _recon_depth(args: argparse.Namespace) -> int:
+    try:
+        operator_policy = load_operator_policy(args.operator_policy) if args.operator_policy else load_operator_policy()
+    except LiveReconAuthorizationError as exc:
+        print(f"operator policy error: {exc}", file=sys.stderr)
+        return 2
+
+    live_runner = LiveReconRunner(
+        ApprovedSubprocessRunner(
+            operator_policy=operator_policy,
+            operator_id=args.operator_id,
+            legal_liability_accepted=args.accept_legal_liability,
+        ),
+        operator_policy=operator_policy,
+        operator_id=args.operator_id,
+        legal_liability_accepted=args.accept_legal_liability,
+        default_httpx_rate_limit_per_minute=args.rate_limit_per_minute,
+    )
+
+    def execute(action: AgentAction) -> AgentRunResult:
+        return AutonomousAgent(
+            policy=AutonomyPolicy(dry_run=False),
+            budget=ActionBudget(
+                max_actions=1,
+                max_live_requests=max(args.max_live_requests, action.request_budget),
+                max_hosts=args.max_hosts,
+            ),
+            runner=live_runner,
+        ).run_plan(AgentPlan(actions=[action]))
+
+    try:
+        result = run_recon_depth(
+            domain=args.domain,
+            output_dir=args.output_dir,
+            profile=cast(ReconDepthProfile, args.profile),
+            action_executor=execute,
+            max_hosts=args.max_hosts,
+            max_urls=args.max_urls,
+            rate_limit_per_minute=args.rate_limit_per_minute,
+            katana_depth=args.katana_depth,
+            katana_js_crawl=args.katana_js_crawl,
+            katana_known_files=args.katana_known_files,
+            katana_crawl_duration_seconds=args.katana_crawl_duration_seconds,
+            nuclei_templates=args.template,
+            nuclei_tags=args.tag,
+            nuclei_severity=args.severity,
+            nuclei_rate_limit_per_second=args.nuclei_rate_limit_per_second,
+            max_validation_actions=args.max_validation_actions,
+        )
+    except ReconDepthError as exc:
+        print(f"recon depth error: {exc}", file=sys.stderr)
+        return 2
+
+    print(result.model_dump_json(indent=2))
+    if result.errors or any(not phase.success for phase in result.phase_runs):
+        return 1
+    return 0
+
+
+def _recon_workflow(args: argparse.Namespace) -> int:
+    try:
+        workflow = load_recon_workflow(args.workflow)
+        operator_policy = load_operator_policy(args.operator_policy) if args.operator_policy else load_operator_policy()
+    except ReconWorkflowError as exc:
+        print(f"recon workflow error: {exc}", file=sys.stderr)
+        return 2
+    except LiveReconAuthorizationError as exc:
+        print(f"operator policy error: {exc}", file=sys.stderr)
+        return 2
+
+    live_runner = LiveReconRunner(
+        ApprovedSubprocessRunner(
+            operator_policy=operator_policy,
+            operator_id=args.operator_id,
+            legal_liability_accepted=args.accept_legal_liability,
+        ),
+        operator_policy=operator_policy,
+        operator_id=args.operator_id,
+        legal_liability_accepted=args.accept_legal_liability,
+    )
+
+    def execute(action: AgentAction) -> AgentRunResult:
+        return AutonomousAgent(
+            policy=AutonomyPolicy(dry_run=False),
+            budget=ActionBudget(
+                max_actions=1,
+                max_live_requests=max(args.max_live_requests, action.request_budget),
+                max_hosts=1,
+            ),
+            runner=live_runner,
+        ).run_plan(AgentPlan(actions=[action]))
+
+    result = run_recon_workflow(workflow, action_executor=execute)
+    print(result.model_dump_json(indent=2))
+    if result.errors or any(run.errors for run in result.step_runs):
+        return 1
+    return 0
+
+
+def _program_list(args: argparse.Namespace) -> int:
+    try:
+        registry = load_program_registry(args.registry) if args.registry else load_program_registry()
+    except ProgramRegistryLoadError as exc:
+        print(f"program registry error: {exc}", file=sys.stderr)
+        return 2
+    print(registry.model_dump_json(indent=2))
+    return 0
+
+
+def _program_match(args: argparse.Namespace) -> int:
+    try:
+        registry = load_program_registry(args.registry) if args.registry else load_program_registry()
+    except ProgramRegistryLoadError as exc:
+        print(f"program registry error: {exc}", file=sys.stderr)
+        return 2
+    decision = match_program_scope(
+        registry,
+        target=args.target,
+        target_kind=cast(TargetKind | None, args.kind),
+        publisher=args.publisher,
+    )
+    print(decision.model_dump_json(indent=2))
+    return 0 if decision.decision == "IN_SCOPE" else 1
+
+
+def _program_diff(args: argparse.Namespace) -> int:
+    try:
+        old_registry = load_program_registry(args.old_registry)
+        new_registry = load_program_registry(args.new_registry)
+    except ProgramRegistryLoadError as exc:
+        print(f"program registry error: {exc}", file=sys.stderr)
+        return 2
+    diff = diff_program_registries(old_registry, new_registry)
+    if args.fresh_only:
+        print(
+            json.dumps(
+                {
+                    "old_version": diff.old_version,
+                    "new_version": diff.new_version,
+                    "fresh_target_count": len(diff.fresh_targets),
+                    "fresh_targets": [
+                        change.model_dump(mode="json") for change in diff.fresh_targets
+                    ],
+                },
+                indent=2,
+            )
+        )
+        return 0
+    print(diff.model_dump_json(indent=2))
+    return 0
+
+
+def _passive_sources(args: argparse.Namespace) -> int:
+    try:
+        catalog = load_passive_source_catalog(args.catalog) if args.catalog else load_passive_source_catalog()
+    except PassiveSourceCatalogError as exc:
+        print(f"passive source catalog error: {exc}", file=sys.stderr)
+        return 2
+    report = evaluate_passive_source_health(
+        catalog,
+        include_disabled=args.include_disabled,
+    )
+    print(report.model_dump_json(indent=2))
+    return 0
+
+
+def _passive_sources_env_template(args: argparse.Namespace) -> int:
+    try:
+        catalog = load_passive_source_catalog(args.catalog) if args.catalog else load_passive_source_catalog()
+    except PassiveSourceCatalogError as exc:
+        print(f"passive source catalog error: {exc}", file=sys.stderr)
+        return 2
+    template = passive_source_env_template(catalog)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(template, encoding="utf-8")
+    else:
+        print(template, end="")
+    return 0
+
+
+def _asset_score(args: argparse.Namespace) -> int:
+    assets = _load_assets(args.asset, args.asset_file)
+    report = score_assets(assets)
+    output = report.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    return 0
+
+
+def _endpoint_mine(args: argparse.Namespace) -> int:
+    try:
+        documents = [_load_web_content_document(spec) for spec in args.document]
+        if not documents:
+            raise ValueError("at least one --document URL=PATH is required")
+        report = mine_javascript_and_api_endpoints(
+            documents,
+            config=EndpointMiningConfig(
+                scope_domains=args.scope_domain,
+                include_third_party=args.include_third_party,
+                include_secret_notes=not args.no_secret_notes,
+            ),
+        )
+    except (OSError, ValueError) as exc:
+        print(f"endpoint mine error: {exc}", file=sys.stderr)
+        return 2
+
+    output = report.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, report.assets)
+    return 0
+
+
+def _owned_crawl_plan(args: argparse.Namespace) -> int:
+    try:
+        pages = [_load_owned_crawl_page(spec) for spec in args.page]
+        if not pages:
+            raise OwnedAccountCrawlError("at least one --page ACCOUNT=URL=PATH is required")
+        result = build_owned_account_crawl_plan(
+            pages,
+            config=OwnedAccountCrawlConfig(
+                scope_domains=args.scope_domain,
+                max_links_per_page=args.max_links_per_page,
+                max_forms_per_page=args.max_forms_per_page,
+            ),
+        )
+    except (OSError, ValueError) as exc:
+        print(f"owned crawl error: {exc}", file=sys.stderr)
+        return 2
+
+    output = result.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, result.assets)
+    if args.plan_output is not None:
+        args.plan_output.parent.mkdir(parents=True, exist_ok=True)
+        args.plan_output.write_text(
+            result.validation_plan.model_dump_json(indent=2) + "\n",
+            encoding="utf-8",
+        )
     return 0
 
 
@@ -938,6 +1423,46 @@ def _live_recon_action(args: argparse.Namespace) -> AgentAction:
                 "rate_limit_per_minute": str(args.rate_limit_per_minute),
             },
         )
+    if args.tool == "katana":
+        target_kind = "url" if args.target.startswith(("http://", "https://")) else "host"
+        return AgentAction(
+            action_type="low_volume_probe",
+            target_kind=cast(TargetKind, target_kind),
+            target=args.target,
+            intended_action="recon",
+            description=f"Run approved scoped katana crawl for {args.target}.",
+            sends_traffic=True,
+            request_budget=max(1, args.max_live_requests),
+            metadata={
+                "tool": "katana",
+                "rate_limit_per_minute": str(args.rate_limit_per_minute),
+                "depth": str(args.depth),
+                "field_scope": args.field_scope,
+                "js_crawl": str(args.js_crawl).lower(),
+                "crawl_duration_seconds": str(args.crawl_duration_seconds),
+                **({"known_files": args.known_files} if args.known_files else {}),
+            },
+        )
+    if args.tool == "nuclei":
+        if not args.template:
+            raise SystemExit("--template is required for --tool nuclei")
+        target_kind = "url" if args.target.startswith(("http://", "https://")) else "host"
+        return AgentAction(
+            action_type="low_volume_probe",
+            target_kind=cast(TargetKind, target_kind),
+            target=args.target,
+            intended_action="recon",
+            description=f"Run approved explicit-template nuclei scan for {args.target}.",
+            sends_traffic=True,
+            request_budget=max(1, args.max_live_requests),
+            metadata={
+                "tool": "nuclei",
+                "nuclei_templates": ",".join(args.template),
+                "nuclei_tags": ",".join(args.tag),
+                "nuclei_severity": ",".join(args.severity),
+                "rate_limit_per_second": str(args.rate_limit_per_second),
+            },
+        )
     if args.artifact_path is None:
         raise SystemExit("--artifact-path is required for --tool jadx")
     if args.publisher is None:
@@ -1079,6 +1604,45 @@ def _parse_asset_spec(spec: str) -> Asset:
     if not separator or not kind or not value:
         raise SystemExit(f"invalid asset spec: {spec!r}; expected kind:value")
     return Asset.model_validate({"kind": kind, "value": value, "source": "cli"})
+
+
+def _load_web_content_document(spec: str) -> WebContentDocument:
+    url, separator, path_text = spec.partition("=")
+    if not separator or not url.strip() or not path_text.strip():
+        raise ValueError(f"invalid document spec: {spec!r}; expected URL=PATH")
+    path = Path(path_text).expanduser()
+    return WebContentDocument(
+        url=url,
+        body=path.read_text(encoding="utf-8"),
+        source=str(path),
+    )
+
+
+def _load_owned_crawl_page(spec: str) -> OwnedAccountCrawlPage:
+    account_id, separator, remainder = spec.partition("=")
+    url, path_separator, path_text = remainder.rpartition("=")
+    if (
+        not separator
+        or not path_separator
+        or not account_id.strip()
+        or not url.strip()
+        or not path_text.strip()
+    ):
+        raise OwnedAccountCrawlError(f"invalid page spec: {spec!r}; expected ACCOUNT=URL=PATH")
+    path = Path(path_text).expanduser()
+    return OwnedAccountCrawlPage(
+        account_id=account_id,
+        url=url,
+        body=path.read_text(encoding="utf-8"),
+        source=str(path),
+    )
+
+
+def _write_asset_jsonl(path: Path, assets: list[Asset]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for asset in assets:
+            handle.write(asset.model_dump_json() + "\n")
 
 
 if __name__ == "__main__":

@@ -11,7 +11,9 @@ from pydantic import Field, field_validator
 from vrp_hunt.guardrails.models import StrictModel
 from vrp_hunt.recon.models import HttpRequest, HttpResponse
 
-AGGRESSIVE_NUCLEI_TAGS = {"dos", "fuzz", "bruteforce", "brute-force", "intrusive"}
+AGGRESSIVE_NUCLEI_TAGS = {"dos", "fuzz", "bruteforce", "brute-force", "intrusive", "dast"}
+SAFE_NUCLEI_PROTOCOLS = {"http"}
+NUCLEI_SEVERITIES = {"info", "low", "medium", "high", "critical", "unknown"}
 
 
 class HttpxTransport:
@@ -38,6 +40,8 @@ class HttpxTransport:
 class NucleiTemplatePolicy(StrictModel):
     templates: list[str] = Field(min_length=1)
     tags: list[str] = Field(default_factory=list)
+    severity: list[str] = Field(default_factory=list)
+    protocol_types: list[str] = Field(default_factory=lambda: ["http"])
 
     @field_validator("templates")
     @classmethod
@@ -56,6 +60,23 @@ class NucleiTemplatePolicy(StrictModel):
             raise ValueError(f"blocked aggressive nuclei tags: {', '.join(sorted(aggressive))}")
         return value
 
+    @field_validator("severity")
+    @classmethod
+    def severity_must_be_known(cls, value: list[str]) -> list[str]:
+        unknown = sorted({severity.lower() for severity in value}.difference(NUCLEI_SEVERITIES))
+        if unknown:
+            raise ValueError(f"unknown nuclei severity values: {', '.join(unknown)}")
+        return value
+
+    @field_validator("protocol_types")
+    @classmethod
+    def protocol_types_must_be_safe(cls, value: list[str]) -> list[str]:
+        selected = {protocol.lower() for protocol in value}
+        blocked = sorted(selected.difference(SAFE_NUCLEI_PROTOCOLS))
+        if blocked:
+            raise ValueError(f"blocked nuclei protocol types: {', '.join(blocked)}")
+        return value
+
 
 class NucleiCommandBuilder:
     def __init__(self, *, binary: str = "nuclei", policy: NucleiTemplatePolicy) -> None:
@@ -71,10 +92,17 @@ class NucleiCommandBuilder:
             str(targets_file),
             "-rl",
             str(rate_limit),
+            "-j",
+            "-silent",
             "-duc",
+            "-ni",
         ]
         for template in self.policy.templates:
             command.extend(["-t", template])
         if self.policy.tags:
             command.extend(["-tags", ",".join(self.policy.tags)])
+        if self.policy.severity:
+            command.extend(["-s", ",".join(self.policy.severity)])
+        if self.policy.protocol_types:
+            command.extend(["-pt", ",".join(self.policy.protocol_types)])
         return command

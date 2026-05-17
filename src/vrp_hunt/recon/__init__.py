@@ -11,6 +11,26 @@ from vrp_hunt.recon.models import (
     HttpResponse,
     ReconScope,
 )
+from vrp_hunt.recon.passive_sources import (
+    DEFAULT_PASSIVE_SOURCE_CATALOG_PATH,
+    PassiveSourceCatalog,
+    PassiveSourceCatalogError,
+    PassiveSourceCategory,
+    PassiveSourceConfig,
+    PassiveSourceHealth,
+    PassiveSourceHealthReport,
+    PassiveSourceStatusValue,
+    evaluate_passive_source_health,
+    load_passive_source_catalog,
+    passive_source_env_template,
+)
+from vrp_hunt.recon.scoring import (
+    AssetScore,
+    AssetScoreReport,
+    AssetScoringProfile,
+    score_asset,
+    score_assets,
+)
 from vrp_hunt.recon.scheduler import AsyncPoliteScheduler, GateDeniedError
 from vrp_hunt.recon.store import AssetStore
 from vrp_hunt.recon.wrappers import HttpxTransport, NucleiCommandBuilder, NucleiTemplatePolicy
@@ -20,6 +40,9 @@ __all__ = [
     "AdapterResult",
     "Asset",
     "AssetInventory",
+    "AssetScore",
+    "AssetScoreReport",
+    "AssetScoringProfile",
     "AssetStore",
     "AsyncPoliteScheduler",
     "GateDeniedError",
@@ -28,9 +51,22 @@ __all__ = [
     "HttpxTransport",
     "NucleiCommandBuilder",
     "NucleiTemplatePolicy",
+    "DEFAULT_PASSIVE_SOURCE_CATALOG_PATH",
+    "PassiveSourceCatalog",
+    "PassiveSourceCatalogError",
+    "PassiveSourceCategory",
+    "PassiveSourceConfig",
+    "PassiveSourceHealth",
+    "PassiveSourceHealthReport",
+    "PassiveSourceStatusValue",
     "ReconAdapter",
     "ReconContext",
     "ReconEngine",
     "ReconRunResult",
     "ReconScope",
+    "evaluate_passive_source_health",
+    "load_passive_source_catalog",
+    "passive_source_env_template",
+    "score_asset",
+    "score_assets",
 ]

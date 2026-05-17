@@ -2,6 +2,8 @@ import getpass
 import json
 from pathlib import Path
 
+import pytest
+
 from vrp_hunt.cli import main
 
 
@@ -1218,3 +1220,499 @@ def test_live_recon_cli_blocks_unauthorized_operator_before_tool_execution(
     assert output["completed_actions"] == 1
     assert not output["observations"][0]["success"]
     assert "authorization failed" in output["observations"][0]["notes"][0]
+
+
+def test_live_recon_cli_builds_katana_action(
+    tmp_path: Path,
+    monkeypatch,  # type: ignore[no-untyped-def]
+    capsys,  # type: ignore[no-untyped-def]
+) -> None:
+    from vrp_hunt.agent import AgentRunResult
+
+    policy_path = tmp_path / "operator_policy.yaml"
+    policy_path.write_text(
+        "\n".join(
+            [
+                'authorized_operator_id: "owner"',
+                f'authorized_local_user: "{getpass.getuser()}"',
+                "allowed_tools:",
+                '  - "katana"',
+                "require_liability_ack: true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    seen: dict[str, str] = {}
+
+    def fake_run_plan(self, plan):  # type: ignore[no-untyped-def]
+        action = plan.actions[0]
+        seen["tool"] = action.metadata["tool"]
+        seen["depth"] = action.metadata["depth"]
+        seen["js_crawl"] = action.metadata["js_crawl"]
+        return AgentRunResult(completed_actions=1)
+
+    monkeypatch.setattr("vrp_hunt.cli.AutonomousAgent.run_plan", fake_run_plan)
+
+    exit_code = main(
+        [
+            "live-recon",
+            "--tool",
+            "katana",
+            "--target",
+            "https://www.google.com",
+            "--operator-policy",
+            str(policy_path),
+            "--operator-id",
+            "owner",
+            "--accept-legal-liability",
+            "--max-live-requests",
+            "5",
+            "--depth",
+            "1",
+            "--js-crawl",
+        ]
+    )
+
+    json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert seen == {"tool": "katana", "depth": "1", "js_crawl": "true"}
+
+
+def test_live_recon_cli_requires_nuclei_template(capsys) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(SystemExit, match="--template"):
+        main(
+            [
+                "live-recon",
+                "--tool",
+                "nuclei",
+                "--target",
+                "https://www.google.com",
+                "--operator-id",
+                "owner",
+                "--accept-legal-liability",
+            ]
+        )
+
+
+def test_recon_depth_cli_runs_balanced_pipeline(
+    tmp_path: Path,
+    monkeypatch,  # type: ignore[no-untyped-def]
+    capsys,  # type: ignore[no-untyped-def]
+) -> None:
+    from vrp_hunt.agent import AgentObservation, AgentRunResult
+    from vrp_hunt.recon import Asset
+
+    policy_path = tmp_path / "operator_policy.yaml"
+    policy_path.write_text(
+        "\n".join(
+            [
+                'authorized_operator_id: "owner"',
+                f'authorized_local_user: "{getpass.getuser()}"',
+                "allowed_tools:",
+                '  - "subfinder"',
+                '  - "httpx"',
+                '  - "katana"',
+                "require_liability_ack: true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    seen: list[str] = []
+
+    def fake_run_plan(self, plan):  # type: ignore[no-untyped-def]
+        action = plan.actions[0]
+        tool = action.metadata["tool"]
+        seen.append(tool)
+        if tool == "subfinder":
+            assets = [
+                Asset(kind="host", value="www.google.com", source="subfinder"),
+                Asset(kind="host", value="out.example", source="subfinder"),
+            ]
+        elif tool == "httpx":
+            assets = [Asset(kind="url", value="https://www.google.com", source="httpx")]
+        else:
+            assets = [Asset(kind="endpoint", value="https://www.google.com/about", source=tool)]
+        return AgentRunResult(
+            observations=[
+                AgentObservation(
+                    action_id=action.action_id,
+                    success=True,
+                    assets=assets,
+                    request_count=action.request_budget,
+                )
+            ],
+            completed_actions=1,
+        )
+
+    monkeypatch.setattr("vrp_hunt.cli.AutonomousAgent.run_plan", fake_run_plan)
+
+    exit_code = main(
+        [
+            "recon-depth",
+            "--domain",
+            "google.com",
+            "--output-dir",
+            str(tmp_path / "depth"),
+            "--operator-policy",
+            str(policy_path),
+            "--operator-id",
+            "owner",
+            "--accept-legal-liability",
+            "--max-hosts",
+            "5",
+            "--max-urls",
+            "5",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert seen == ["subfinder", "httpx", "katana"]
+    assert [phase["phase"] for phase in output["phase_runs"]] == [
+        "subfinder",
+        "httpx",
+        "katana",
+    ]
+    depth_assets = (tmp_path / "depth" / "assets.jsonl").read_text(encoding="utf-8")
+    assert "out.example" not in depth_assets
+
+
+def test_program_list_cli_outputs_registry(capsys) -> None:  # type: ignore[no-untyped-def]
+    exit_code = main(["program-list"])
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["programs"][0]["id"] == "google-alphabet-vrp"
+
+
+def test_program_match_cli_returns_in_scope(capsys) -> None:  # type: ignore[no-untyped-def]
+    exit_code = main(["program-match", "--target", "https://accounts.google.com/"])
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["decision"] == "IN_SCOPE"
+    assert output["matched_entry_id"] == "google-web"
+
+
+def test_program_match_cli_returns_nonzero_for_out_of_scope(
+    capsys,  # type: ignore[no-untyped-def]
+) -> None:
+    exit_code = main(["program-match", "--target", "foo.appspot.com"])
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert output["decision"] == "OUT_OF_SCOPE"
+    assert output["matched_entry_id"] == "appspot-customer-app"
+
+
+def test_program_diff_cli_outputs_fresh_targets(
+    tmp_path: Path,
+    capsys,  # type: ignore[no-untyped-def]
+) -> None:
+    from vrp_hunt.programs import ProgramScopeEntry, load_program_registry
+
+    old_registry = load_program_registry()
+    old_program = old_registry.programs[0]
+    fresh_entry = ProgramScopeEntry(
+        id="fresh-google-host",
+        kind="exact_host",
+        value="fresh.google.com",
+        reward_eligible=True,
+        notes="Fresh scoped host.",
+        source_reference="test",
+    )
+    new_program = old_program.model_copy(update={"scope": [*old_program.scope, fresh_entry]})
+    new_registry = old_registry.model_copy(
+        update={"version": "program-registry-2026-05-17", "programs": [new_program]}
+    )
+    old_path = tmp_path / "old.json"
+    new_path = tmp_path / "new.json"
+    old_path.write_text(old_registry.model_dump_json(indent=2), encoding="utf-8")
+    new_path.write_text(new_registry.model_dump_json(indent=2), encoding="utf-8")
+
+    exit_code = main(
+        [
+            "program-diff",
+            "--old-registry",
+            str(old_path),
+            "--new-registry",
+            str(new_path),
+            "--fresh-only",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["fresh_target_count"] == 1
+    assert output["fresh_targets"][0]["entry_id"] == "fresh-google-host"
+
+
+def test_recon_workflow_cli_runs_yaml_workflow(
+    tmp_path: Path,
+    monkeypatch,  # type: ignore[no-untyped-def]
+    capsys,  # type: ignore[no-untyped-def]
+) -> None:
+    from vrp_hunt.agent import AgentObservation, AgentRunResult
+    from vrp_hunt.recon import Asset
+
+    workflow_path = tmp_path / "workflow.yaml"
+    workflow_path.write_text(
+        f"""
+version: "recon-workflow-v1"
+name: "google-recon"
+output_dir: "{tmp_path / "workflow-output"}"
+defaults:
+  profile: "passive"
+steps:
+  - id: "google-passive"
+    kind: "recon_depth"
+    domain: "google.com"
+""",
+        encoding="utf-8",
+    )
+    policy_path = tmp_path / "operator_policy.yaml"
+    policy_path.write_text(
+        "\n".join(
+            [
+                'authorized_operator_id: "owner"',
+                f'authorized_local_user: "{getpass.getuser()}"',
+                "allowed_tools:",
+                '  - "subfinder"',
+                "require_liability_ack: true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    seen: list[str] = []
+
+    def fake_run_plan(self, plan):  # type: ignore[no-untyped-def]
+        action = plan.actions[0]
+        seen.append(action.metadata["tool"])
+        return AgentRunResult(
+            observations=[
+                AgentObservation(
+                    action_id=action.action_id,
+                    success=True,
+                    assets=[Asset(kind="host", value="www.google.com", source="subfinder")],
+                    request_count=action.request_budget,
+                )
+            ],
+            completed_actions=1,
+        )
+
+    monkeypatch.setattr("vrp_hunt.cli.AutonomousAgent.run_plan", fake_run_plan)
+
+    exit_code = main(
+        [
+            "recon-workflow",
+            "--workflow",
+            str(workflow_path),
+            "--operator-policy",
+            str(policy_path),
+            "--operator-id",
+            "owner",
+            "--accept-legal-liability",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert seen == ["subfinder"]
+    assert output["step_runs"][0]["step_id"] == "google-passive"
+    assert output["step_runs"][0]["result"]["profile"] == "passive"
+
+
+def test_passive_sources_cli_reports_health(
+    tmp_path: Path,
+    monkeypatch,  # type: ignore[no-untyped-def]
+    capsys,  # type: ignore[no-untyped-def]
+) -> None:
+    catalog_path = tmp_path / "sources.yaml"
+    catalog_path.write_text(
+        """
+version: "test"
+sources:
+  - id: "github"
+    name: "GitHub"
+    categories: ["code"]
+    required_env: ["GITHUB_TOKEN"]
+    source_reference: "test"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_TOKEN", "secret-value")
+
+    exit_code = main(["passive-sources", "--catalog", str(catalog_path)])
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["ready_sources"] == 1
+    assert output["sources"][0]["configured_env"] == ["GITHUB_TOKEN"]
+    assert "secret-value" not in json.dumps(output)
+
+
+def test_passive_sources_env_template_cli_writes_template(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "sources.yaml"
+    output_path = tmp_path / ".env.example"
+    catalog_path.write_text(
+        """
+version: "test"
+sources:
+  - id: "shodan"
+    name: "Shodan"
+    categories: ["search"]
+    required_env: ["SHODAN_API_KEY"]
+    source_reference: "test"
+""",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "passive-sources-env-template",
+            "--catalog",
+            str(catalog_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert "SHODAN_API_KEY=" in output_path.read_text(encoding="utf-8")
+
+
+def test_asset_score_cli_scores_asset_file(
+    tmp_path: Path,
+    capsys,  # type: ignore[no-untyped-def]
+) -> None:
+    from vrp_hunt.recon import Asset
+
+    asset_file = tmp_path / "assets.jsonl"
+    asset_file.write_text(
+        Asset(kind="url", value="https://www.google.com", source="httpx").model_dump_json() + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(["asset-score", "--asset-file", str(asset_file)])
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["total_assets"] == 1
+    assert output["scores"][0]["asset"]["value"] == "https://www.google.com"
+    assert output["scores"][0]["priority"] > 0
+
+
+def test_asset_score_cli_writes_output(tmp_path: Path) -> None:
+    output_path = tmp_path / "scores.json"
+
+    exit_code = main(
+        [
+            "asset-score",
+            "--asset",
+            "host:www.google.com",
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    assert output["scores"][0]["asset"]["value"] == "www.google.com"
+
+
+def test_endpoint_mine_cli_mines_saved_document(
+    tmp_path: Path,
+    capsys,  # type: ignore[no-untyped-def]
+) -> None:
+    page_path = tmp_path / "page.html"
+    assets_path = tmp_path / "assets.jsonl"
+    page_path.write_text(
+        '<script src="/app.js?build=123"></script>fetch("/api/me?id=owned-a")',
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "endpoint-mine",
+            "--document",
+            f"https://www.google.com/={page_path}",
+            "--scope-domain",
+            "google.com",
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    asset_lines = assets_path.read_text(encoding="utf-8").splitlines()
+
+    assert exit_code == 0
+    assert output["document_count"] == 1
+    assert "https://www.google.com/app.js" in {asset["value"] for asset in output["assets"]}
+    assert "https://www.google.com/api/me" in {asset["value"] for asset in output["assets"]}
+    assert asset_lines
+
+
+def test_endpoint_mine_cli_rejects_missing_documents(capsys) -> None:  # type: ignore[no-untyped-def]
+    exit_code = main(["endpoint-mine"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "at least one --document" in captured.err
+
+
+def test_owned_crawl_plan_cli_writes_assets_and_plan(tmp_path: Path) -> None:
+    page_path = tmp_path / "owned.html"
+    assets_path = tmp_path / "assets.jsonl"
+    plan_path = tmp_path / "plan.json"
+    page_path.write_text(
+        """
+        <a href="https://accounts.google.com/o/oauth2/v2/auth?client_id=owned">oauth</a>
+        <form method="post" action="/document/d/owned/update">
+          <input name="csrf_token" value="redacted">
+        </form>
+        """,
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "owned-crawl-plan",
+            "--page",
+            f"owned-a=https://docs.google.com/document/d/owned/edit={page_path}",
+            "--scope-domain",
+            "google.com",
+            "--assets-output",
+            str(assets_path),
+            "--plan-output",
+            str(plan_path),
+        ]
+    )
+
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert assets_path.exists()
+    assert {
+        "oauth_validation",
+        "csrf_validation",
+    } <= {action["action_type"] for action in plan["actions"]}
+
+
+def test_owned_crawl_plan_cli_rejects_missing_pages(capsys) -> None:  # type: ignore[no-untyped-def]
+    exit_code = main(["owned-crawl-plan"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "at least one --page" in captured.err

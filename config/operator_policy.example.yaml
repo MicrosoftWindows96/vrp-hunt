@@ -3,5 +3,7 @@ authorized_local_user: "replace-with-local-os-user"
 allowed_tools:
   - "subfinder"
   - "httpx"
+  - "katana"
+  - "nuclei"
   - "jadx"
 require_liability_ack: true
