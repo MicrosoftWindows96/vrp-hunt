@@ -36,6 +36,7 @@ def test_import_jadx_output_extracts_manifest_endpoints_and_notes(tmp_path: Path
     (jadx_dir / "AndroidManifest.xml").write_text(
         """<manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.google.example">
+  <uses-permission android:name="android.permission.CAMERA" />
   <application>
     <activity android:name=".DeepLinkActivity" android:exported="true">
       <intent-filter>
@@ -48,7 +49,10 @@ def test_import_jadx_output_extracts_manifest_endpoints_and_notes(tmp_path: Path
         encoding="utf-8",
     )
     (jadx_dir / "Client.java").write_text(
-        'String auth = "https://accounts.google.com/o/oauth2/v2/auth?client_id=owned";',
+        (
+            'String auth = "https://accounts.google.com/o/oauth2/v2/auth?client_id=owned";'
+            " okhttp3.CertificatePinner pinner;"
+        ),
         encoding="utf-8",
     )
 
@@ -59,6 +63,8 @@ def test_import_jadx_output_extracts_manifest_endpoints_and_notes(tmp_path: Path
     assert "https://accounts.google.com/o/oauth2/v2/auth?client_id=owned" in {
         asset.value for asset in assets
     }
+    assert "android-permission-risk:android.permission.CAMERA" in {asset.value for asset in assets}
+    assert "mobile-pinning:okhttp-certificate-pinner" in {asset.value for asset in assets}
 
 
 def test_import_mobsf_static_report_extracts_redacted_assets(tmp_path: Path) -> None:
@@ -70,7 +76,8 @@ def test_import_mobsf_static_report_extracts_redacted_assets(tmp_path: Path) -> 
                 "app_name": "Example",
                 "activities": ["com.google.example.MainActivity"],
                 "exported_activities": ["com.google.example.DeepLinkActivity"],
-                "permissions": ["android.permission.INTERNET"],
+                "permissions": ["android.permission.READ_CONTACTS"],
+                "certificate_analysis": "TrustKit with NSPinnedDomains configured",
                 "urls": [
                     "https://www.googleapis.com/oauth2/v1/userinfo?access_token=secret",
                     "www.google.com",
@@ -87,6 +94,10 @@ def test_import_mobsf_static_report_extracts_redacted_assets(tmp_path: Path) -> 
     assert "com.google.example.MainActivity" in values
     assert "https://www.googleapis.com/oauth2/v1/userinfo" in values
     assert "www.google.com" in values
+    permission = next(asset for asset in assets if asset.value == "android-permission:android.permission.READ_CONTACTS")
+    assert permission.metadata["risk"] == "high"
+    assert "mobile-pinning:trustkit" in values
+    assert "mobile-pinning:ios-pinned-domains" in values
     assert not any("secret" in asset.value for asset in assets)
 
 

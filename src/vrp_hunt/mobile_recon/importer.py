@@ -15,7 +15,11 @@ from pydantic import Field
 
 from vrp_hunt.guardrails.models import StrictModel
 from vrp_hunt.mobile_recon.adapter import MobileReconAdapter
-from vrp_hunt.mobile_recon.extractors import extract_mobile_endpoints
+from vrp_hunt.mobile_recon.extractors import (
+    classify_android_permission_risk,
+    extract_certificate_pinning_indicators,
+    extract_mobile_endpoints,
+)
 from vrp_hunt.mobile_recon.hypotheses import MobileStaticHypothesis, build_mobile_static_hypotheses
 from vrp_hunt.recon import Asset
 
@@ -199,6 +203,7 @@ def import_mobsf_static_report(*, app_id: str, path: Path) -> tuple[MobileImport
     assets.extend(_mobsf_permission_assets(parsed, app_id=app_id))
     assets.extend(_mobsf_domain_assets(parsed, app_id=app_id))
     for text in _walk_strings(parsed):
+        assets.extend(extract_certificate_pinning_indicators(text, parent=app_id, source="mobsf-import"))
         assets.extend(extract_mobile_endpoints(text, parent=app_id, source="mobsf-import"))
     deduped = _dedupe_assets([_sanitize_asset(asset) for asset in assets])
     return (
@@ -246,13 +251,19 @@ def _mobsf_component_assets(parsed: dict[str, object], *, app_id: str) -> list[A
 def _mobsf_permission_assets(parsed: dict[str, object], *, app_id: str) -> list[Asset]:
     assets: list[Asset] = []
     for permission in _strings_from_value(parsed.get("permissions")):
+        risk = classify_android_permission_risk(permission)
         assets.append(
             Asset(
                 kind="note",
                 value=f"android-permission:{permission}",
                 source="mobsf-import",
                 parent=app_id,
-                metadata={"redacted": "true"},
+                metadata={
+                    "risk": risk.risk,
+                    "category": risk.category,
+                    "reason": risk.reason,
+                    "redacted": "true",
+                },
             )
         )
     return assets

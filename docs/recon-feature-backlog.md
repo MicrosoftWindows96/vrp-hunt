@@ -92,8 +92,8 @@
 - [x] MobSF static-analysis importer
 - [x] Mobile deep-link extraction
 - [x] Mobile API base URL extraction
-- [ ] Mobile certificate pinning indicator extraction
-- [ ] Mobile manifest permission risk summary
+- [x] Mobile certificate pinning indicator extraction
+- [x] Mobile manifest permission risk summary
 
 ## Authenticated Owned-Account Testing
 

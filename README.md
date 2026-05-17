@@ -533,6 +533,17 @@ uv run vrp-hunt scanner-container-import \
   --output artifacts/scanner/containers.json
 ```
 
+Mobile imports also surface passive certificate-pinning indicators and Android
+manifest permission risk summaries from local JADX/MobSF artifacts:
+
+```bash
+uv run vrp-hunt mobile-import \
+  --app-id com.google.android.example \
+  --jadx-output artifacts/mobile/jadx/example \
+  --mobsf-report artifacts/mobile/mobsf-example.json \
+  --assets-output artifacts/mobile/mobile-assets.jsonl
+```
+
 Run the safe automation loop and write redacted artifacts:
 
 ```bash

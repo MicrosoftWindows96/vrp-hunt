@@ -7,6 +7,7 @@ from pathlib import Path
 from vrp_hunt.guardrails import GateDecision, TargetCandidate
 from vrp_hunt.recon import AdapterCapability, AdapterResult, Asset, ReconContext, ReconScope
 from vrp_hunt.mobile_recon.extractors import (
+    extract_certificate_pinning_indicators,
     extract_mobile_endpoints,
     extract_mobile_risk_notes,
     extract_mobile_secret_notes,
@@ -151,6 +152,7 @@ class MobileReconAdapter:
     @staticmethod
     def _assets_from_text(text: str, *, parent: str) -> list[Asset]:
         return [
+            *extract_certificate_pinning_indicators(text, parent=parent),
             *extract_mobile_endpoints(text, parent=parent),
             *extract_mobile_secret_notes(text, parent=parent),
             *extract_mobile_risk_notes(text, parent=parent),

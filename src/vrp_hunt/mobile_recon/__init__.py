@@ -2,11 +2,16 @@
 
 from vrp_hunt.mobile_recon.adapter import MobileReconAdapter
 from vrp_hunt.mobile_recon.extractors import (
+    AndroidManifestPermissionRiskSummary,
+    AndroidPermissionRisk,
+    classify_android_permission_risk,
+    extract_certificate_pinning_indicators,
     extract_mobile_endpoints,
     extract_mobile_risk_notes,
     extract_mobile_secret_notes,
     parse_android_manifest,
     parse_dynamic_messages,
+    summarize_android_manifest_permissions,
 )
 from vrp_hunt.mobile_recon.hypotheses import (
     MobileStaticHypothesis,
@@ -38,6 +43,8 @@ __all__ = [
     "MobileArtifactImportError",
     "MobileArtifactImportReport",
     "MobileImportRecord",
+    "AndroidManifestPermissionRiskSummary",
+    "AndroidPermissionRisk",
     "MobileReconAdapter",
     "MobileReconConfig",
     "MobileStaticHypothesis",
@@ -50,6 +57,8 @@ __all__ = [
     "build_mobile_static_hypotheses",
     "build_mobile_static_report",
     "build_objection_explore_command",
+    "classify_android_permission_risk",
+    "extract_certificate_pinning_indicators",
     "extract_mobile_endpoints",
     "extract_mobile_risk_notes",
     "extract_mobile_secret_notes",
@@ -59,4 +68,5 @@ __all__ = [
     "import_mobsf_static_report",
     "parse_android_manifest",
     "parse_dynamic_messages",
+    "summarize_android_manifest_permissions",
 ]
