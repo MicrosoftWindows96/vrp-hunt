@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [
-    { name = "MicrosoftWindows96", email = "spam@zagrosi.com" },
+    { name = "zagrosi-code", email = "spam@zagrosi.com" },
 ]
 keywords = [
     "authorized-security-research",
@@ -44,10 +44,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/MicrosoftWindows96/vrp-hunt"
-Repository = "https://github.com/MicrosoftWindows96/vrp-hunt"
-Issues = "https://github.com/MicrosoftWindows96/vrp-hunt/issues"
-Security = "https://github.com/MicrosoftWindows96/vrp-hunt/security/policy"
+Homepage = "https://github.com/zagrosi-code/vrp-hunt"
+Repository = "https://github.com/zagrosi-code/vrp-hunt"
+Issues = "https://github.com/zagrosi-code/vrp-hunt/issues"
+Security = "https://github.com/zagrosi-code/vrp-hunt/security/policy"
 
 [project.scripts]
 vrp-hunt = "vrp_hunt.cli:main"
