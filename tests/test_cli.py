@@ -1718,6 +1718,50 @@ steps:
     assert output["step_runs"][0]["result"]["profile"] == "passive"
 
 
+def test_recon_workflow_plan_cli_writes_orchestration_plan(tmp_path: Path) -> None:
+    workflow_path = tmp_path / "workflow.yaml"
+    output_path = tmp_path / "workflow-plan.json"
+    workflow_path.write_text(
+        f"""
+version: "recon-workflow-v1"
+name: "google-recon"
+output_dir: "{tmp_path / "workflow-output"}"
+steps:
+  - id: "seed"
+    domain: "google.com"
+  - id: "crawl"
+    domain: "google.com"
+    depends_on: ["seed"]
+""",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "recon-workflow-plan",
+            "--workflow",
+            str(workflow_path),
+            "--worker-count",
+            "2",
+            "--schedule-interval-minutes",
+            "60",
+            "--notification-platform",
+            "slack",
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert output["dag"]["execution_order"] == ["seed", "crawl"]
+    assert output["workers"]["worker_count"] == 2
+    assert output["schedule"]["interval_minutes"] == 60
+    assert output["api_routes"][0]["path"] == "/workflows"
+    assert output["notification_platforms"] == ["slack"]
+
+
 def test_passive_sources_cli_reports_health(
     tmp_path: Path,
     monkeypatch,  # type: ignore[no-untyped-def]

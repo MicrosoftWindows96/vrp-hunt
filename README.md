@@ -143,6 +143,19 @@ uv run vrp-hunt recon-workflow \
   --accept-legal-liability
 ```
 
+Build an offline orchestration plan for the same workflow, including DAG order,
+local-first worker assignments, schedule previews, REST route contracts, and
+Slack/Discord notification targets:
+
+```bash
+uv run vrp-hunt recon-workflow-plan \
+  --workflow workflows/google-recon.yaml \
+  --worker-count 2 \
+  --schedule-interval-minutes 1440 \
+  --notification-platform slack \
+  --output artifacts/workflows/google-recon-plan.json
+```
+
 Check passive recon source readiness without printing secret values:
 
 ```bash

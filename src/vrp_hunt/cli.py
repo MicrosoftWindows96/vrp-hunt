@@ -40,6 +40,7 @@ from vrp_hunt.agent import (
     ReconDepthError,
     ReconDepthProfile,
     ReconWorkflowError,
+    ReconWorkflowWorkerMode,
     apply_approval_gate,
     artifact_bundle_from_agent_run,
     artifact_bundle_from_derived_http_check,
@@ -51,6 +52,7 @@ from vrp_hunt.agent import (
     cookie_header_from_env,
     build_offline_analysis_plan,
     build_recon_iteration_summary,
+    build_recon_workflow_orchestration_plan,
     expand_owned_browser_scenario_derived_urls,
     load_derived_http_check_result,
     load_operator_policy,
@@ -184,6 +186,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _recon_depth(args)
     if args.command == "recon-workflow":
         return _recon_workflow(args)
+    if args.command == "recon-workflow-plan":
+        return _recon_workflow_plan(args)
     if args.command == "program-list":
         return _program_list(args)
     if args.command == "program-match":
@@ -402,6 +406,26 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Acknowledge that the configured operator is legally liable for this live run",
     )
+
+    workflow_plan = subparsers.add_parser(
+        "recon-workflow-plan",
+        help="Build an offline DAG, worker, schedule, API, and notification plan for a workflow",
+    )
+    workflow_plan.add_argument("--workflow", type=Path, required=True)
+    workflow_plan.add_argument("--worker-count", type=int, default=1)
+    workflow_plan.add_argument(
+        "--worker-mode",
+        choices=("local", "local_first", "distributed"),
+        default="local_first",
+    )
+    workflow_plan.add_argument("--schedule-interval-minutes", type=int)
+    workflow_plan.add_argument(
+        "--notification-platform",
+        action="append",
+        choices=("slack", "discord"),
+        default=[],
+    )
+    workflow_plan.add_argument("--output", type=Path)
 
     program_list = subparsers.add_parser(
         "program-list",
@@ -1576,6 +1600,31 @@ def _recon_workflow(args: argparse.Namespace) -> int:
     print(result.model_dump_json(indent=2))
     if result.errors or any(run.errors for run in result.step_runs):
         return 1
+    return 0
+
+
+def _recon_workflow_plan(args: argparse.Namespace) -> int:
+    try:
+        workflow = load_recon_workflow(args.workflow)
+        plan = build_recon_workflow_orchestration_plan(
+            workflow,
+            worker_count=args.worker_count,
+            worker_mode=cast(ReconWorkflowWorkerMode, args.worker_mode),
+            schedule_interval_minutes=args.schedule_interval_minutes,
+            notification_platforms=args.notification_platform,
+        )
+    except ReconWorkflowError as exc:
+        print(f"recon workflow plan error: {exc}", file=sys.stderr)
+        return 2
+    except ValueError as exc:
+        print(f"recon workflow plan error: {exc}", file=sys.stderr)
+        return 2
+    output = plan.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
     return 0
 
 

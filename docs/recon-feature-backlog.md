@@ -64,12 +64,12 @@
 ## Workflow Orchestration
 
 - [X] YAML workflow definitions
-- [ ] Workflow DAG with dependencies, conditions, and resumability
-- [ ] Distributed worker mode with local-first execution
-- [ ] Scheduled monitoring runs
-- [ ] Run comparison timeline
-- [ ] REST API mode
-- [ ] Discord/Slack notification mode for completed runs
+- [x] Workflow DAG with dependencies, conditions, and resumability
+- [x] Distributed worker mode with local-first execution
+- [x] Scheduled monitoring runs
+- [x] Run comparison timeline
+- [x] REST API mode
+- [x] Discord/Slack notification mode for completed runs
 
 ## Scanner Integrations
 
