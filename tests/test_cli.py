@@ -2167,6 +2167,597 @@ def test_historical_url_import_cli_writes_scoped_assets(tmp_path: Path) -> None:
     assert "historical-url-import" in assets_text
 
 
+def test_robots_import_cli_writes_scoped_redacted_assets(tmp_path: Path) -> None:
+    robots_path = tmp_path / "robots.txt"
+    output_path = tmp_path / "robots.json"
+    assets_path = tmp_path / "robots-assets.jsonl"
+    robots_path.write_text(
+        """
+        User-agent: *
+        Disallow: /private?id=owned-a&token=secret
+        Sitemap: https://www.google.com/sitemap.xml
+        Sitemap: https://evil.example/sitemap.xml
+        """,
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "robots-import",
+            "--robots",
+            f"https://www.google.com/robots.txt={robots_path}",
+            "--scope-domain",
+            "google.com",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    asset_lines = [json.loads(line) for line in assets_path.read_text(encoding="utf-8").splitlines()]
+
+    assert exit_code == 1
+    assert output["report_count"] == 1
+    assert output["total_assets"] == 2
+    assert "skipped third-party sitemap host evil.example" in output["warnings"]
+    assert {asset["value"] for asset in asset_lines} == {
+        "https://www.google.com/private",
+        "https://www.google.com/sitemap.xml",
+    }
+    assert "secret" not in output_path.read_text(encoding="utf-8")
+    assert "secret" not in assets_path.read_text(encoding="utf-8")
+
+
+def test_sitemap_import_cli_writes_scoped_redacted_assets(tmp_path: Path) -> None:
+    sitemap_path = tmp_path / "sitemap.xml"
+    output_path = tmp_path / "sitemap.json"
+    assets_path = tmp_path / "sitemap-assets.jsonl"
+    sitemap_path.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          <url>
+            <loc>https://www.google.com/account/profile?id=owned-a&amp;token=secret</loc>
+          </url>
+          <url>
+            <loc>https://evil.com/private</loc>
+          </url>
+        </urlset>
+        """,
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "sitemap-import",
+            "--sitemap",
+            f"https://www.google.com/sitemap.xml={sitemap_path}",
+            "--scope-domain",
+            "google.com",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    asset_lines = [json.loads(line) for line in assets_path.read_text(encoding="utf-8").splitlines()]
+
+    assert exit_code == 1
+    assert output["report_count"] == 1
+    assert output["total_entries"] == 1
+    assert output["total_assets"] == 1
+    assert "url entry 2: skipped third-party host evil.com" in output["warnings"]
+    assert asset_lines[0]["value"] == "https://www.google.com/account/profile"
+    assert asset_lines[0]["metadata"]["parameter_names"] == "id,token"
+    assert "secret" not in output_path.read_text(encoding="utf-8")
+    assert "secret" not in assets_path.read_text(encoding="utf-8")
+
+
+def test_security_txt_import_cli_writes_scoped_redacted_assets(tmp_path: Path) -> None:
+    security_txt_path = tmp_path / "security.txt"
+    output_path = tmp_path / "security-txt.json"
+    assets_path = tmp_path / "security-txt-assets.jsonl"
+    security_txt_path.write_text(
+        """
+        Contact: mailto:security@google.com
+        Contact: https://bughunters.google.com/report?id=owned-a&token=secret
+        Contact: https://evil.com/report
+        Expires: 2027-12-31T23:59:59Z
+        """,
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "security-txt-import",
+            "--security-txt",
+            f"https://www.google.com/.well-known/security.txt={security_txt_path}",
+            "--scope-domain",
+            "google.com",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    asset_lines = [json.loads(line) for line in assets_path.read_text(encoding="utf-8").splitlines()]
+
+    assert exit_code == 1
+    assert output["report_count"] == 1
+    assert output["total_records"] == 4
+    assert "line 4: skipped third-party contact host evil.com" in output["warnings"]
+    assert {asset["value"] for asset in asset_lines} == {
+        "https://bughunters.google.com/report",
+        "security-contact:mailto:google.com",
+        "security-txt-expires:https://www.google.com/.well-known/security.txt",
+    }
+    assert "security@google.com" not in output_path.read_text(encoding="utf-8")
+    assert "secret" not in output_path.read_text(encoding="utf-8")
+    assert "secret" not in assets_path.read_text(encoding="utf-8")
+
+
+def test_csp_extract_cli_writes_scoped_redacted_assets(tmp_path: Path) -> None:
+    csp_path = tmp_path / "headers.txt"
+    output_path = tmp_path / "csp.json"
+    assets_path = tmp_path / "csp-assets.jsonl"
+    csp_path.write_text(
+        "Content-Security-Policy: connect-src https://api.google.com/v1?token=secret https://evil.com/api; "
+        "report-uri /csp/report?id=owned-a\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "csp-extract",
+            "--document",
+            f"https://www.google.com/app={csp_path}",
+            "--scope-domain",
+            "google.com",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    asset_lines = [json.loads(line) for line in assets_path.read_text(encoding="utf-8").splitlines()]
+
+    assert exit_code == 1
+    assert output["report_count"] == 1
+    assert output["policy_count"] == 1
+    assert "policy 1 connect-src: skipped third-party host evil.com" in output["warnings"]
+    assert {asset["value"] for asset in asset_lines} == {
+        "https://api.google.com/v1",
+        "https://www.google.com/csp/report",
+    }
+    assert "secret" not in output_path.read_text(encoding="utf-8")
+    assert "secret" not in assets_path.read_text(encoding="utf-8")
+
+
+def test_api_spec_import_cli_writes_scoped_redacted_assets(tmp_path: Path) -> None:
+    spec_path = tmp_path / "openapi.json"
+    output_path = tmp_path / "api-spec.json"
+    assets_path = tmp_path / "api-spec-assets.jsonl"
+    spec_path.write_text(
+        json.dumps(
+            {
+                "openapi": "3.0.3",
+                "servers": [{"url": "https://api.google.com"}, {"url": "https://evil.com"}],
+                "paths": {
+                    "/v1/users/{id}": {
+                        "get": {
+                            "operationId": "getUser",
+                            "parameters": [
+                                {"name": "id", "in": "path"},
+                                {"name": "token", "in": "query"},
+                            ],
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "api-spec-import",
+            "--spec",
+            f"https://www.google.com/openapi.json?token=secret={spec_path}",
+            "--scope-domain",
+            "google.com",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    asset_lines = [json.loads(line) for line in assets_path.read_text(encoding="utf-8").splitlines()]
+
+    assert exit_code == 1
+    assert output["report_count"] == 1
+    assert output["total_endpoints"] == 1
+    assert "GET /v1/users/{id}: skipped third-party host evil.com" in output["warnings"]
+    assert {asset["value"] for asset in asset_lines} == {
+        "https://api.google.com/v1/users/{id}",
+        "id",
+        "token",
+    }
+    assert "secret" not in output_path.read_text(encoding="utf-8")
+    assert "secret" not in assets_path.read_text(encoding="utf-8")
+
+
+def test_graphql_discover_cli_writes_scoped_plans_and_assets(tmp_path: Path) -> None:
+    document_path = tmp_path / "app.js"
+    output_path = tmp_path / "graphql.json"
+    assets_path = tmp_path / "graphql-assets.jsonl"
+    document_path.write_text(
+        'fetch("https://api.google.com/graphql?token=secret"); fetch("https://evil.com/graphql");',
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "graphql-discover",
+            "--document",
+            f"https://www.google.com/app.js?build=123={document_path}",
+            "--scope-domain",
+            "google.com",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    asset_lines = [json.loads(line) for line in assets_path.read_text(encoding="utf-8").splitlines()]
+
+    assert exit_code == 1
+    assert output["report_count"] == 1
+    assert output["total_candidates"] == 1
+    assert output["introspection_plans"][0]["approval_required"]
+    assert output["introspection_plans"][0]["sends_traffic"]
+    assert "skipped third-party GraphQL host evil.com" in output["warnings"]
+    assert asset_lines[0]["value"] == "https://api.google.com/graphql"
+    assert asset_lines[0]["metadata"]["approval_required"] == "true"
+    assert "secret" not in output_path.read_text(encoding="utf-8")
+    assert "secret" not in assets_path.read_text(encoding="utf-8")
+
+
+def test_technology_fingerprint_cli_writes_scoped_assets(tmp_path: Path) -> None:
+    httpx_path = tmp_path / "httpx.jsonl"
+    output_path = tmp_path / "technology.json"
+    assets_path = tmp_path / "technology-assets.jsonl"
+    httpx_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "url": "https://www.google.com/?token=secret",
+                        "technologies": ["GFE"],
+                        "headers": {"server": "gws", "x-powered-by": "Express"},
+                    }
+                ),
+                json.dumps({"url": "https://evil.com/", "technologies": ["ThirdParty"]}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "technology-fingerprint",
+            "--httpx",
+            str(httpx_path),
+            "--scope-domain",
+            "google.com",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    asset_lines = [json.loads(line) for line in assets_path.read_text(encoding="utf-8").splitlines()]
+
+    assert exit_code == 1
+    assert output["total_inputs"] == 2
+    assert "skipped third-party host evil.com" in output["warnings"][0]
+    assert {asset["value"] for asset in asset_lines} == {"Express", "GFE", "gws"}
+    assert "secret" not in output_path.read_text(encoding="utf-8")
+    assert "secret" not in assets_path.read_text(encoding="utf-8")
+
+
+def test_screenshot_analyze_cli_writes_clusters_diffs_and_assets(tmp_path: Path) -> None:
+    current_path = tmp_path / "current.jsonl"
+    previous_path = tmp_path / "previous.jsonl"
+    output_path = tmp_path / "screenshots.json"
+    assets_path = tmp_path / "screenshot-assets.jsonl"
+    previous_path.write_text(
+        json.dumps(
+            {
+                "url": "https://www.google.com/app",
+                "visual_hash": "oldhash",
+                "title": "Old",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    current_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "url": "https://www.google.com/app?id=owned-a&token=secret",
+                        "visual_hash": "newhash",
+                        "title": "New",
+                        "screenshot_path": "screens/app.png",
+                    }
+                ),
+                json.dumps({"url": "https://evil.com/app", "visual_hash": "evil"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "screenshot-analyze",
+            "--current",
+            str(current_path),
+            "--previous",
+            str(previous_path),
+            "--scope-domain",
+            "google.com",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    asset_lines = [json.loads(line) for line in assets_path.read_text(encoding="utf-8").splitlines()]
+
+    assert exit_code == 1
+    assert output["total_clusters"] == 1
+    assert output["diffs"][0]["diff_type"] == "changed"
+    assert "skipped third-party host evil.com" in output["warnings"][0]
+    assert {asset["value"] for asset in asset_lines} == {
+        "https://www.google.com/app",
+        "screenshot-cluster:cluster-0001",
+        "screenshot-diff:https://www.google.com/app",
+    }
+    assert "secret" not in output_path.read_text(encoding="utf-8")
+    assert "secret" not in assets_path.read_text(encoding="utf-8")
+
+
+def test_app_change_monitor_cli_writes_changes_and_assets(tmp_path: Path) -> None:
+    current_path = tmp_path / "current.jsonl"
+    previous_path = tmp_path / "previous.jsonl"
+    output_path = tmp_path / "app-change.json"
+    assets_path = tmp_path / "app-change-assets.jsonl"
+    previous_path.write_text(
+        json.dumps(
+            {
+                "url": "https://www.google.com/app",
+                "title": "Old",
+                "body_hash": "oldhash",
+                "headers": {"x-build": "1"},
+                "javascript_hashes": ["js1"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    current_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "url": "https://www.google.com/app?id=owned-a&token=secret",
+                        "title": "New",
+                        "body_hash": "newhash",
+                        "headers": {"x-build": "2"},
+                        "javascript_hashes": ["js2"],
+                    }
+                ),
+                json.dumps({"url": "https://evil.com/app", "body_hash": "evil"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "app-change-monitor",
+            "--current",
+            str(current_path),
+            "--previous",
+            str(previous_path),
+            "--scope-domain",
+            "google.com",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    asset_lines = [json.loads(line) for line in assets_path.read_text(encoding="utf-8").splitlines()]
+
+    assert exit_code == 1
+    assert output["total_changes"] == 1
+    assert set(output["changes"][0]["changed_fields"]) == {"title", "body_hash", "header_hash", "javascript_hashes"}
+    assert "skipped third-party host evil.com" in output["warnings"][0]
+    assert asset_lines[0]["value"] == "app-change:https://www.google.com/app"
+    assert "secret" not in output_path.read_text(encoding="utf-8")
+    assert "secret" not in assets_path.read_text(encoding="utf-8")
+
+
+def test_dead_host_suppress_cli_writes_assets_and_host_list(tmp_path: Path) -> None:
+    httpx_path = tmp_path / "httpx.jsonl"
+    output_path = tmp_path / "dead-hosts.json"
+    assets_path = tmp_path / "dead-host-assets.jsonl"
+    hosts_path = tmp_path / "suppressed-hosts.txt"
+    httpx_path.write_text(
+        "\n".join(
+            [
+                json.dumps({"input": "https://dead.google.com/?token=secret", "failed": True}),
+                json.dumps({"input": "dead.google.com", "failed": True, "error": "timeout"}),
+                json.dumps({"url": "https://alive.google.com/", "status_code": 200}),
+                json.dumps({"url": "https://evil.com/", "failed": True}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "dead-host-suppress",
+            "--httpx",
+            str(httpx_path),
+            "--scope-domain",
+            "google.com",
+            "--backoff-base-seconds",
+            "30",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+            "--suppressed-hosts-output",
+            str(hosts_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    asset_lines = [json.loads(line) for line in assets_path.read_text(encoding="utf-8").splitlines()]
+
+    assert exit_code == 1
+    assert output["suppressed_hosts"] == ["dead.google.com"]
+    dead_host = next(host for host in output["hosts"] if host["host"] == "dead.google.com")
+    assert dead_host["next_retry_delay_seconds"] == 60
+    assert asset_lines[0]["value"] == "dead-host:dead.google.com"
+    assert hosts_path.read_text(encoding="utf-8") == "dead.google.com\n"
+    assert "secret" not in output_path.read_text(encoding="utf-8")
+
+
+def test_safe_exposure_check_cli_writes_redacted_signals(tmp_path: Path) -> None:
+    from vrp_hunt.recon import Asset
+
+    body_path = tmp_path / "env.txt"
+    asset_file = tmp_path / "assets.jsonl"
+    output_path = tmp_path / "exposure.json"
+    assets_path = tmp_path / "exposure-assets.jsonl"
+    body_path.write_text("AWS_ACCESS_KEY_ID=AKIA_TEST_VALUE", encoding="utf-8")
+    asset_file.write_text(
+        "\n".join(
+            [
+                Asset(kind="url", value="https://admin.google.com/admin", source="httpx").model_dump_json(),
+                Asset(kind="url", value="https://evil.com/debug", source="httpx").model_dump_json(),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "safe-exposure-check",
+            "--document",
+            f"https://www.google.com/.env?token={body_path}",
+            "--asset-file",
+            str(asset_file),
+            "--scope-domain",
+            "google.com",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    asset_lines = [json.loads(line) for line in assets_path.read_text(encoding="utf-8").splitlines()]
+
+    assert exit_code == 1
+    assert {"config_leak", "admin_panel"} <= {signal["category"] for signal in output["signals"]}
+    assert "skipped third-party host evil.com" in output["warnings"][0]
+    assert asset_lines
+    assert "AKIA_TEST_VALUE" not in output_path.read_text(encoding="utf-8")
+
+
+def test_app_rank_cli_writes_interesting_app_notes(tmp_path: Path) -> None:
+    from vrp_hunt.recon import Asset
+
+    asset_file = tmp_path / "assets.jsonl"
+    output_path = tmp_path / "app-rank.json"
+    assets_path = tmp_path / "app-rank-assets.jsonl"
+    asset_file.write_text(
+        "\n".join(
+            [
+                Asset(
+                    kind="endpoint",
+                    value="https://accounts.google.com/o/oauth2/v2/auth",
+                    source="api-spec-import",
+                ).model_dump_json(),
+                Asset(
+                    kind="url",
+                    value="https://accounts.google.com/login",
+                    source="httpx",
+                    metadata={"header:set-cookie": "SID=redacted", "form_count": "1"},
+                ).model_dump_json(),
+                Asset(
+                    kind="technology",
+                    value="React",
+                    source="technology-fingerprint",
+                    parent="https://accounts.google.com/",
+                ).model_dump_json(),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "app-rank",
+            "--asset-file",
+            str(asset_file),
+            "--scope-domain",
+            "google.com",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    asset_lines = [json.loads(line) for line in assets_path.read_text(encoding="utf-8").splitlines()]
+
+    assert exit_code == 0
+    assert output["apps"][0]["host"] == "accounts.google.com"
+    assert {"auth", "api", "cookie", "form", "technology"} <= set(output["apps"][0]["signal_categories"])
+    assert asset_lines[0]["value"] == "interesting-app:https://accounts.google.com/"
+
+
 def test_endpoint_mine_cli_mines_saved_document(
     tmp_path: Path,
     capsys,  # type: ignore[no-untyped-def]

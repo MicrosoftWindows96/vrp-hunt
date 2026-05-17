@@ -122,9 +122,39 @@ from vrp_hunt.recon import (
 from vrp_hunt.reporting import Platform, ReportDraft, render_markdown_report
 from vrp_hunt.ui import build_dashboard_data, write_dashboard
 from vrp_hunt.web_recon import (
+    ApiSpecDiscoveryReport,
+    CspExtractionReport,
+    DeadHostSuppressionConfig,
     EndpointMiningConfig,
+    ExposureDocument,
+    GraphQLDiscoveryReport,
+    RobotsParseReport,
+    SecurityTxtParseReport,
+    SitemapParseReport,
     WebContentDocument,
+    build_api_spec_import_bundle,
+    build_csp_import_bundle,
+    build_graphql_import_bundle,
+    build_robots_import_bundle,
+    build_security_txt_import_bundle,
+    build_sitemap_import_bundle,
+    check_safe_exposures,
+    discover_api_spec_assets,
+    discover_graphql_endpoints,
+    analyze_host_availability,
+    analyze_screenshot_manifests,
+    extract_csp_from_text,
+    fingerprint_technology_metadata,
+    load_app_snapshot_documents,
+    load_host_probe_documents,
+    load_screenshot_manifest_documents,
+    load_technology_metadata_documents,
     mine_javascript_and_api_endpoints,
+    monitor_app_changes,
+    parse_robots_txt,
+    parse_security_txt,
+    parse_sitemap_xml,
+    rank_interesting_apps,
 )
 
 
@@ -175,6 +205,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _recursive_passive_plan(args)
     if args.command == "historical-url-import":
         return _historical_url_import(args)
+    if args.command == "robots-import":
+        return _robots_import(args)
+    if args.command == "sitemap-import":
+        return _sitemap_import(args)
+    if args.command == "security-txt-import":
+        return _security_txt_import(args)
+    if args.command == "csp-extract":
+        return _csp_extract(args)
+    if args.command == "api-spec-import":
+        return _api_spec_import(args)
+    if args.command == "graphql-discover":
+        return _graphql_discover(args)
+    if args.command == "technology-fingerprint":
+        return _technology_fingerprint(args)
+    if args.command == "screenshot-analyze":
+        return _screenshot_analyze(args)
+    if args.command == "app-change-monitor":
+        return _app_change_monitor(args)
+    if args.command == "dead-host-suppress":
+        return _dead_host_suppress(args)
+    if args.command == "safe-exposure-check":
+        return _safe_exposure_check(args)
+    if args.command == "app-rank":
+        return _app_rank(args)
     if args.command == "endpoint-mine":
         return _endpoint_mine(args)
     if args.command == "owned-crawl-plan":
@@ -551,6 +605,265 @@ def build_parser() -> argparse.ArgumentParser:
     )
     historical.add_argument("--output", type=Path)
     historical.add_argument("--assets-output", type=Path, help="Optional URL/endpoint JSONL output")
+
+    robots = subparsers.add_parser(
+        "robots-import",
+        help="Parse saved robots.txt files into scoped endpoint and scheduler assets",
+    )
+    robots.add_argument(
+        "--robots",
+        action="append",
+        default=[],
+        metavar="URL=PATH",
+        help="Saved robots.txt as URL=PATH; repeat for multiple files",
+    )
+    robots.add_argument(
+        "--scope-domain",
+        action="append",
+        default=[],
+        help="Allowed domain or host suffix; repeat for multiple scope roots",
+    )
+    robots.add_argument("--output", type=Path)
+    robots.add_argument("--assets-output", type=Path, help="Optional JSONL asset output")
+
+    sitemap = subparsers.add_parser(
+        "sitemap-import",
+        help="Parse saved sitemap.xml files into scoped URL and endpoint assets",
+    )
+    sitemap.add_argument(
+        "--sitemap",
+        action="append",
+        default=[],
+        metavar="URL=PATH",
+        help="Saved sitemap.xml as URL=PATH; repeat for multiple files",
+    )
+    sitemap.add_argument(
+        "--scope-domain",
+        action="append",
+        default=[],
+        help="Allowed domain or host suffix; repeat for multiple scope roots",
+    )
+    sitemap.add_argument("--output", type=Path)
+    sitemap.add_argument("--assets-output", type=Path, help="Optional JSONL asset output")
+
+    security_txt = subparsers.add_parser(
+        "security-txt-import",
+        help="Parse saved security.txt files into scoped contact and policy assets",
+    )
+    security_txt.add_argument(
+        "--security-txt",
+        action="append",
+        default=[],
+        metavar="URL=PATH",
+        help="Saved security.txt as URL=PATH; repeat for multiple files",
+    )
+    security_txt.add_argument(
+        "--scope-domain",
+        action="append",
+        default=[],
+        help="Allowed domain or host suffix; repeat for multiple scope roots",
+    )
+    security_txt.add_argument("--output", type=Path)
+    security_txt.add_argument("--assets-output", type=Path, help="Optional JSONL asset output")
+
+    csp = subparsers.add_parser(
+        "csp-extract",
+        help="Extract scoped endpoints from saved Content-Security-Policy content",
+    )
+    csp.add_argument(
+        "--document",
+        action="append",
+        default=[],
+        metavar="URL=PATH",
+        help="Saved CSP header, raw policy, or HTML meta content as URL=PATH",
+    )
+    csp.add_argument(
+        "--scope-domain",
+        action="append",
+        default=[],
+        help="Allowed domain or host suffix; repeat for multiple scope roots",
+    )
+    csp.add_argument("--output", type=Path)
+    csp.add_argument("--assets-output", type=Path, help="Optional JSONL asset output")
+
+    api_spec = subparsers.add_parser(
+        "api-spec-import",
+        help="Import saved OpenAPI, Swagger, or Postman files into scoped endpoint assets",
+    )
+    api_spec.add_argument(
+        "--spec",
+        action="append",
+        default=[],
+        metavar="URL=PATH",
+        help="Saved OpenAPI, Swagger, or Postman file as URL=PATH; repeat for multiple files",
+    )
+    api_spec.add_argument(
+        "--scope-domain",
+        action="append",
+        default=[],
+        help="Allowed domain or host suffix; repeat for multiple scope roots",
+    )
+    api_spec.add_argument("--output", type=Path)
+    api_spec.add_argument("--assets-output", type=Path, help="Optional JSONL asset output")
+
+    graphql = subparsers.add_parser(
+        "graphql-discover",
+        help="Discover GraphQL endpoints from saved content and plan safe introspection checks",
+    )
+    graphql.add_argument(
+        "--document",
+        action="append",
+        default=[],
+        metavar="URL=PATH",
+        help="Saved HTML, JS, response, or API content as URL=PATH; repeat for multiple files",
+    )
+    graphql.add_argument(
+        "--scope-domain",
+        action="append",
+        default=[],
+        help="Allowed domain or host suffix; repeat for multiple scope roots",
+    )
+    graphql.add_argument("--output", type=Path)
+    graphql.add_argument("--assets-output", type=Path, help="Optional JSONL asset output")
+
+    technology = subparsers.add_parser(
+        "technology-fingerprint",
+        help="Fingerprint technologies from saved httpx and Wappalyzer metadata",
+    )
+    technology.add_argument("--httpx", type=Path, action="append", default=[], help="Saved httpx JSONL output")
+    technology.add_argument(
+        "--wappalyzer",
+        type=Path,
+        action="append",
+        default=[],
+        help="Saved Wappalyzer-style JSON or JSONL output",
+    )
+    technology.add_argument(
+        "--scope-domain",
+        action="append",
+        default=[],
+        help="Allowed domain or host suffix; repeat for multiple scope roots",
+    )
+    technology.add_argument("--output", type=Path)
+    technology.add_argument("--assets-output", type=Path, help="Optional JSONL technology asset output")
+
+    screenshots = subparsers.add_parser(
+        "screenshot-analyze",
+        help="Cluster saved screenshot manifests and diff previous/current snapshots",
+    )
+    screenshots.add_argument(
+        "--current",
+        type=Path,
+        action="append",
+        default=[],
+        help="Current screenshot manifest JSON or JSONL; repeat for multiple files",
+    )
+    screenshots.add_argument(
+        "--previous",
+        type=Path,
+        action="append",
+        default=[],
+        help="Previous screenshot manifest JSON or JSONL for visual diffing",
+    )
+    screenshots.add_argument(
+        "--scope-domain",
+        action="append",
+        default=[],
+        help="Allowed domain or host suffix; repeat for multiple scope roots",
+    )
+    screenshots.add_argument("--output", type=Path)
+    screenshots.add_argument("--assets-output", type=Path, help="Optional JSONL screenshot asset output")
+
+    change_monitor = subparsers.add_parser(
+        "app-change-monitor",
+        help="Diff saved app snapshots by headers, body, title, and JavaScript hashes",
+    )
+    change_monitor.add_argument(
+        "--current",
+        type=Path,
+        action="append",
+        default=[],
+        help="Current app snapshot JSON or JSONL; repeat for multiple files",
+    )
+    change_monitor.add_argument(
+        "--previous",
+        type=Path,
+        action="append",
+        default=[],
+        help="Previous app snapshot JSON or JSONL for change monitoring",
+    )
+    change_monitor.add_argument(
+        "--scope-domain",
+        action="append",
+        default=[],
+        help="Allowed domain or host suffix; repeat for multiple scope roots",
+    )
+    change_monitor.add_argument("--output", type=Path)
+    change_monitor.add_argument("--assets-output", type=Path, help="Optional JSONL app-change note output")
+
+    dead_hosts = subparsers.add_parser(
+        "dead-host-suppress",
+        help="Analyze saved probe metadata and emit dead-host suppression records",
+    )
+    dead_hosts.add_argument("--httpx", type=Path, action="append", default=[], help="Saved httpx JSON or JSONL output")
+    dead_hosts.add_argument("--live-run", type=Path, action="append", default=[], help="Saved live-recon run JSON")
+    dead_hosts.add_argument(
+        "--live-run-dir",
+        type=Path,
+        action="append",
+        default=[],
+        help="Directory containing saved live-recon run JSON files",
+    )
+    dead_hosts.add_argument(
+        "--scope-domain",
+        action="append",
+        default=[],
+        help="Allowed domain or host suffix; repeat for multiple scope roots",
+    )
+    dead_hosts.add_argument("--min-failures", type=int, default=2)
+    dead_hosts.add_argument("--suppress-after-failures", type=int, default=2)
+    dead_hosts.add_argument("--retry-budget", type=int, default=3)
+    dead_hosts.add_argument("--backoff-base-seconds", type=float, default=60.0)
+    dead_hosts.add_argument("--backoff-cap-seconds", type=float, default=3600.0)
+    dead_hosts.add_argument("--output", type=Path)
+    dead_hosts.add_argument("--assets-output", type=Path, help="Optional JSONL dead-host note output")
+    dead_hosts.add_argument("--suppressed-hosts-output", type=Path, help="Optional plain-text suppressed host list")
+
+    exposure = subparsers.add_parser(
+        "safe-exposure-check",
+        help="Check saved scoped URLs/content for panel, debug, and config exposure indicators",
+    )
+    exposure.add_argument(
+        "--document",
+        action="append",
+        default=[],
+        metavar="URL=PATH",
+        help="Saved response body as URL=PATH; repeat for multiple documents",
+    )
+    exposure.add_argument("--asset-file", type=Path, action="append", default=[], help="Asset JSONL input")
+    exposure.add_argument(
+        "--scope-domain",
+        action="append",
+        default=[],
+        help="Allowed domain or host suffix; repeat for multiple scope roots",
+    )
+    exposure.add_argument("--output", type=Path)
+    exposure.add_argument("--assets-output", type=Path, help="Optional JSONL safe-exposure note output")
+
+    app_rank = subparsers.add_parser(
+        "app-rank",
+        help="Rank interesting apps from scoped asset JSONL signals",
+    )
+    app_rank.add_argument("--asset-file", type=Path, action="append", default=[], help="Asset JSONL input")
+    app_rank.add_argument(
+        "--scope-domain",
+        action="append",
+        default=[],
+        help="Allowed domain or host suffix; repeat for multiple scope roots",
+    )
+    app_rank.add_argument("--limit", type=int, default=50)
+    app_rank.add_argument("--output", type=Path)
+    app_rank.add_argument("--assets-output", type=Path, help="Optional JSONL interesting-app note output")
 
     endpoint_mine = subparsers.add_parser(
         "endpoint-mine",
@@ -1538,6 +1851,292 @@ def _historical_url_import(args: argparse.Namespace) -> int:
     return 1 if report.warnings else 0
 
 
+def _robots_import(args: argparse.Namespace) -> int:
+    try:
+        reports = [_load_robots_parse_report(spec, args.scope_domain) for spec in args.robots]
+        if not reports:
+            raise ValueError("at least one --robots URL=PATH is required")
+        bundle = build_robots_import_bundle(reports)
+    except (OSError, ValueError) as exc:
+        print(f"robots import error: {exc}", file=sys.stderr)
+        return 2
+
+    output = bundle.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, bundle.assets)
+    return 1 if bundle.warnings else 0
+
+
+def _sitemap_import(args: argparse.Namespace) -> int:
+    try:
+        reports = [_load_sitemap_parse_report(spec, args.scope_domain) for spec in args.sitemap]
+        if not reports:
+            raise ValueError("at least one --sitemap URL=PATH is required")
+        bundle = build_sitemap_import_bundle(reports)
+    except (OSError, ValueError) as exc:
+        print(f"sitemap import error: {exc}", file=sys.stderr)
+        return 2
+
+    output = bundle.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, bundle.assets)
+    return 1 if bundle.warnings else 0
+
+
+def _security_txt_import(args: argparse.Namespace) -> int:
+    try:
+        reports = [_load_security_txt_parse_report(spec, args.scope_domain) for spec in args.security_txt]
+        if not reports:
+            raise ValueError("at least one --security-txt URL=PATH is required")
+        bundle = build_security_txt_import_bundle(reports)
+    except (OSError, ValueError) as exc:
+        print(f"security.txt import error: {exc}", file=sys.stderr)
+        return 2
+
+    output = bundle.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, bundle.assets)
+    return 1 if bundle.warnings else 0
+
+
+def _csp_extract(args: argparse.Namespace) -> int:
+    try:
+        reports = [_load_csp_extraction_report(spec, args.scope_domain) for spec in args.document]
+        if not reports:
+            raise ValueError("at least one --document URL=PATH is required")
+        bundle = build_csp_import_bundle(reports)
+    except (OSError, ValueError) as exc:
+        print(f"csp extract error: {exc}", file=sys.stderr)
+        return 2
+
+    output = bundle.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, bundle.assets)
+    return 1 if bundle.warnings else 0
+
+
+def _api_spec_import(args: argparse.Namespace) -> int:
+    try:
+        reports = [_load_api_spec_discovery_report(spec, args.scope_domain) for spec in args.spec]
+        if not reports:
+            raise ValueError("at least one --spec URL=PATH is required")
+        bundle = build_api_spec_import_bundle(reports)
+    except (OSError, ValueError) as exc:
+        print(f"api spec import error: {exc}", file=sys.stderr)
+        return 2
+
+    output = bundle.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, bundle.assets)
+    return 1 if bundle.warnings else 0
+
+
+def _graphql_discover(args: argparse.Namespace) -> int:
+    try:
+        reports = [_load_graphql_discovery_report(spec, args.scope_domain) for spec in args.document]
+        if not reports:
+            raise ValueError("at least one --document URL=PATH is required")
+        bundle = build_graphql_import_bundle(reports)
+    except (OSError, ValueError) as exc:
+        print(f"graphql discover error: {exc}", file=sys.stderr)
+        return 2
+
+    output = bundle.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, bundle.assets)
+    return 1 if bundle.warnings else 0
+
+
+def _technology_fingerprint(args: argparse.Namespace) -> int:
+    try:
+        if not args.httpx and not args.wappalyzer:
+            raise ValueError("at least one --httpx or --wappalyzer path is required")
+        documents = load_technology_metadata_documents(
+            httpx_files=args.httpx,
+            wappalyzer_files=args.wappalyzer,
+        )
+        report = fingerprint_technology_metadata(documents, scope_domains=args.scope_domain)
+    except (OSError, ValueError) as exc:
+        print(f"technology fingerprint error: {exc}", file=sys.stderr)
+        return 2
+
+    output = report.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, report.assets)
+    return 1 if report.warnings else 0
+
+
+def _screenshot_analyze(args: argparse.Namespace) -> int:
+    try:
+        if not args.current:
+            raise ValueError("at least one --current screenshot manifest is required")
+        documents = load_screenshot_manifest_documents(
+            current_files=args.current,
+            previous_files=args.previous,
+        )
+        report = analyze_screenshot_manifests(documents, scope_domains=args.scope_domain)
+    except (OSError, ValueError) as exc:
+        print(f"screenshot analyze error: {exc}", file=sys.stderr)
+        return 2
+
+    output = report.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, report.assets)
+    return 1 if report.warnings else 0
+
+
+def _app_change_monitor(args: argparse.Namespace) -> int:
+    try:
+        if not args.current:
+            raise ValueError("at least one --current app snapshot manifest is required")
+        documents = load_app_snapshot_documents(
+            current_files=args.current,
+            previous_files=args.previous,
+        )
+        report = monitor_app_changes(documents, scope_domains=args.scope_domain)
+    except (OSError, ValueError) as exc:
+        print(f"app change monitor error: {exc}", file=sys.stderr)
+        return 2
+
+    output = report.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, report.assets)
+    return 1 if report.warnings else 0
+
+
+def _dead_host_suppress(args: argparse.Namespace) -> int:
+    try:
+        if not args.httpx and not args.live_run and not args.live_run_dir:
+            raise ValueError("at least one --httpx, --live-run, or --live-run-dir path is required")
+        documents = load_host_probe_documents(
+            httpx_files=args.httpx,
+            live_run_files=args.live_run,
+            live_run_dirs=args.live_run_dir,
+        )
+        report = analyze_host_availability(
+            documents,
+            scope_domains=args.scope_domain,
+            config=DeadHostSuppressionConfig(
+                min_failures=args.min_failures,
+                suppress_after_failures=args.suppress_after_failures,
+                retry_budget=args.retry_budget,
+                backoff_base_seconds=args.backoff_base_seconds,
+                backoff_cap_seconds=args.backoff_cap_seconds,
+            ),
+        )
+    except (OSError, ValueError) as exc:
+        print(f"dead host suppress error: {exc}", file=sys.stderr)
+        return 2
+
+    output = report.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, report.assets)
+    if args.suppressed_hosts_output is not None:
+        args.suppressed_hosts_output.parent.mkdir(parents=True, exist_ok=True)
+        args.suppressed_hosts_output.write_text(
+            "\n".join(report.suppressed_hosts) + ("\n" if report.suppressed_hosts else ""),
+            encoding="utf-8",
+        )
+    return 1 if report.warnings else 0
+
+
+def _safe_exposure_check(args: argparse.Namespace) -> int:
+    try:
+        documents = [_load_exposure_document(spec) for spec in args.document]
+        assets = _load_asset_jsonl_files(args.asset_file)
+        if not documents and not assets:
+            raise ValueError("at least one --document URL=PATH or --asset-file path is required")
+        report = check_safe_exposures(
+            documents,
+            scope_domains=args.scope_domain,
+            assets=assets,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"safe exposure check error: {exc}", file=sys.stderr)
+        return 2
+
+    output = report.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, report.assets)
+    return 1 if report.warnings else 0
+
+
+def _app_rank(args: argparse.Namespace) -> int:
+    try:
+        if not args.asset_file:
+            raise ValueError("at least one --asset-file path is required")
+        assets = _load_asset_jsonl_files(args.asset_file)
+        report = rank_interesting_apps(assets, scope_domains=args.scope_domain, limit=args.limit)
+    except (OSError, ValueError) as exc:
+        print(f"app rank error: {exc}", file=sys.stderr)
+        return 2
+
+    output = report.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, report.assets)
+    return 1 if report.warnings else 0
+
+
 def _endpoint_mine(args: argparse.Namespace) -> int:
     try:
         documents = [_load_web_content_document(spec) for spec in args.document]
@@ -2195,6 +2794,66 @@ def _load_web_content_document(spec: str) -> WebContentDocument:
         body=path.read_text(encoding="utf-8"),
         source=str(path),
     )
+
+
+def _load_exposure_document(spec: str) -> ExposureDocument:
+    url, separator, path_text = spec.partition("=")
+    if not separator or not url.strip() or not path_text.strip():
+        raise ValueError(f"invalid exposure document spec: {spec!r}; expected URL=PATH")
+    path = Path(path_text).expanduser()
+    return ExposureDocument(
+        url=url,
+        body=path.read_text(encoding="utf-8"),
+        source=str(path),
+    )
+
+
+def _load_robots_parse_report(spec: str, scope_domains: list[str]) -> RobotsParseReport:
+    url, separator, path_text = spec.partition("=")
+    if not separator or not url.strip() or not path_text.strip():
+        raise ValueError(f"invalid robots spec: {spec!r}; expected URL=PATH")
+    path = Path(path_text).expanduser()
+    return parse_robots_txt(url, path.read_text(encoding="utf-8"), scope_domains=scope_domains)
+
+
+def _load_sitemap_parse_report(spec: str, scope_domains: list[str]) -> SitemapParseReport:
+    url, separator, path_text = spec.partition("=")
+    if not separator or not url.strip() or not path_text.strip():
+        raise ValueError(f"invalid sitemap spec: {spec!r}; expected URL=PATH")
+    path = Path(path_text).expanduser()
+    return parse_sitemap_xml(url, path.read_text(encoding="utf-8"), scope_domains=scope_domains)
+
+
+def _load_security_txt_parse_report(spec: str, scope_domains: list[str]) -> SecurityTxtParseReport:
+    url, separator, path_text = spec.partition("=")
+    if not separator or not url.strip() or not path_text.strip():
+        raise ValueError(f"invalid security.txt spec: {spec!r}; expected URL=PATH")
+    path = Path(path_text).expanduser()
+    return parse_security_txt(url, path.read_text(encoding="utf-8"), scope_domains=scope_domains)
+
+
+def _load_csp_extraction_report(spec: str, scope_domains: list[str]) -> CspExtractionReport:
+    url, separator, path_text = spec.partition("=")
+    if not separator or not url.strip() or not path_text.strip():
+        raise ValueError(f"invalid CSP document spec: {spec!r}; expected URL=PATH")
+    path = Path(path_text).expanduser()
+    return extract_csp_from_text(url, path.read_text(encoding="utf-8"), scope_domains=scope_domains)
+
+
+def _load_api_spec_discovery_report(spec: str, scope_domains: list[str]) -> ApiSpecDiscoveryReport:
+    url, separator, path_text = spec.rpartition("=")
+    if not separator or not url.strip() or not path_text.strip():
+        raise ValueError(f"invalid API spec: {spec!r}; expected URL=PATH")
+    path = Path(path_text).expanduser()
+    return discover_api_spec_assets(url, path.read_text(encoding="utf-8"), scope_domains=scope_domains)
+
+
+def _load_graphql_discovery_report(spec: str, scope_domains: list[str]) -> GraphQLDiscoveryReport:
+    url, separator, path_text = spec.rpartition("=")
+    if not separator or not url.strip() or not path_text.strip():
+        raise ValueError(f"invalid GraphQL document spec: {spec!r}; expected URL=PATH")
+    path = Path(path_text).expanduser()
+    return discover_graphql_endpoints(url, path.read_text(encoding="utf-8"), scope_domains=scope_domains)
 
 
 def _load_owned_crawl_page(spec: str) -> OwnedAccountCrawlPage:

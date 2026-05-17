@@ -252,6 +252,140 @@ uv run vrp-hunt historical-url-import \
   --assets-output artifacts/history/historical-url-assets.jsonl
 ```
 
+Parse saved `robots.txt` files into scoped endpoint, sitemap, host, and
+crawl-delay assets:
+
+```bash
+uv run vrp-hunt robots-import \
+  --robots "https://www.google.com/robots.txt=artifacts/pages/google-robots.txt" \
+  --scope-domain google.com \
+  --output artifacts/passive/robots-report.json \
+  --assets-output artifacts/passive/robots-assets.jsonl
+```
+
+Parse saved `sitemap.xml` files into scoped URL and endpoint assets:
+
+```bash
+uv run vrp-hunt sitemap-import \
+  --sitemap "https://www.google.com/sitemap.xml=artifacts/pages/google-sitemap.xml" \
+  --scope-domain google.com \
+  --output artifacts/passive/sitemap-report.json \
+  --assets-output artifacts/passive/sitemap-assets.jsonl
+```
+
+Parse saved `security.txt` files into redacted contact notes and scoped policy
+links:
+
+```bash
+uv run vrp-hunt security-txt-import \
+  --security-txt "https://www.google.com/.well-known/security.txt=artifacts/pages/google-security.txt" \
+  --scope-domain google.com \
+  --output artifacts/passive/security-txt-report.json \
+  --assets-output artifacts/passive/security-txt-assets.jsonl
+```
+
+Extract scoped endpoints from saved CSP headers, raw policies, or HTML meta
+tags:
+
+```bash
+uv run vrp-hunt csp-extract \
+  --document "https://www.google.com/=artifacts/pages/www-google-csp.txt" \
+  --scope-domain google.com \
+  --output artifacts/endpoint-mine/csp-report.json \
+  --assets-output artifacts/endpoint-mine/csp-assets.jsonl
+```
+
+Import saved OpenAPI, Swagger, or Postman files into scoped endpoint and
+parameter assets:
+
+```bash
+uv run vrp-hunt api-spec-import \
+  --spec "https://www.google.com/openapi.json=artifacts/specs/google-openapi.json" \
+  --scope-domain google.com \
+  --output artifacts/endpoint-mine/api-spec-report.json \
+  --assets-output artifacts/endpoint-mine/api-spec-assets.jsonl
+```
+
+Discover GraphQL endpoints from saved content and emit approval-required
+introspection check plans without sending traffic:
+
+```bash
+uv run vrp-hunt graphql-discover \
+  --document "https://www.google.com/app.js=artifacts/pages/www-google-app.js" \
+  --scope-domain google.com \
+  --output artifacts/endpoint-mine/graphql-report.json \
+  --assets-output artifacts/endpoint-mine/graphql-assets.jsonl
+```
+
+Fingerprint technologies from saved `httpx` and Wappalyzer metadata:
+
+```bash
+uv run vrp-hunt technology-fingerprint \
+  --httpx artifacts/httpx/results.jsonl \
+  --wappalyzer artifacts/fingerprints/wappalyzer.json \
+  --scope-domain google.com \
+  --output artifacts/endpoint-mine/technology-report.json \
+  --assets-output artifacts/endpoint-mine/technology-assets.jsonl
+```
+
+Cluster saved screenshot manifests and compare previous/current visual hashes:
+
+```bash
+uv run vrp-hunt screenshot-analyze \
+  --current artifacts/screenshots/current.jsonl \
+  --previous artifacts/screenshots/previous.jsonl \
+  --scope-domain google.com \
+  --output artifacts/endpoint-mine/screenshot-report.json \
+  --assets-output artifacts/endpoint-mine/screenshot-assets.jsonl
+```
+
+Rank interesting apps from saved asset JSONL signals:
+
+```bash
+uv run vrp-hunt app-rank \
+  --asset-file artifacts/endpoint-mine/assets.jsonl \
+  --asset-file artifacts/endpoint-mine/technology-assets.jsonl \
+  --scope-domain google.com \
+  --output artifacts/endpoint-mine/app-rank-report.json \
+  --assets-output artifacts/endpoint-mine/app-rank-assets.jsonl
+```
+
+Monitor saved app snapshots for header, body, title, and JavaScript changes:
+
+```bash
+uv run vrp-hunt app-change-monitor \
+  --current artifacts/app-monitor/current.jsonl \
+  --previous artifacts/app-monitor/previous.jsonl \
+  --scope-domain google.com \
+  --output artifacts/endpoint-mine/app-change-report.json \
+  --assets-output artifacts/endpoint-mine/app-change-assets.jsonl
+```
+
+Suppress repeatedly failed hosts from saved probe metadata and keep a retry
+backoff trail:
+
+```bash
+uv run vrp-hunt dead-host-suppress \
+  --httpx artifacts/httpx/results.jsonl \
+  --live-run-dir artifacts/live-httpx-curated \
+  --scope-domain google.com \
+  --output artifacts/endpoint-mine/dead-host-report.json \
+  --assets-output artifacts/endpoint-mine/dead-host-assets.jsonl \
+  --suppressed-hosts-output artifacts/endpoint-mine/suppressed-hosts.txt
+```
+
+Check saved responses and URL assets for safe exposure indicators without
+sending traffic:
+
+```bash
+uv run vrp-hunt safe-exposure-check \
+  --document "https://www.google.com/.env=artifacts/pages/www-google-env.txt" \
+  --asset-file artifacts/endpoint-mine/assets.jsonl \
+  --scope-domain google.com \
+  --output artifacts/endpoint-mine/exposure-report.json \
+  --assets-output artifacts/endpoint-mine/exposure-assets.jsonl
+```
+
 Mine saved HTML or JavaScript content for scoped, redacted endpoint assets:
 
 ```bash

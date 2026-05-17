@@ -34,22 +34,22 @@
 - [x] Subdomain permutation engine with strict caps
 - [x] Recursive passive subdomain discovery
 - [x] Historical URL ingestion from Wayback, urlscan, and Common Crawl
-- [ ] robots.txt parser
-- [ ] sitemap.xml parser
-- [ ] security.txt parser
+- [x] robots.txt parser
+- [x] sitemap.xml parser
+- [x] security.txt parser
 
 ## Web Recon And Endpoint Mining
 
 - [X] JavaScript URL extraction and endpoint mining
-- [ ] CSP endpoint extraction
-- [ ] OpenAPI/Swagger/Postman collection discovery
-- [ ] GraphQL endpoint discovery and safe introspection check
-- [ ] Technology fingerprinting via httpx/Wappalyzer-style metadata
-- [ ] Screenshot clustering and visual diffing
-- [ ] Interesting-app ranking by auth, APIs, JS, cookies, forms, and tech
-- [ ] App change monitor for headers, body hash, title, and JS hash
-- [ ] Dead-host suppression and retry/backoff history
-- [ ] Safe exposure checks for panels, debug pages, and config leaks
+- [x] CSP endpoint extraction
+- [x] OpenAPI/Swagger/Postman collection discovery
+- [x] GraphQL endpoint discovery and safe introspection check
+- [x] Technology fingerprinting via httpx/Wappalyzer-style metadata
+- [x] Screenshot clustering and visual diffing
+- [x] Interesting-app ranking by auth, APIs, JS, cookies, forms, and tech
+- [x] App change monitor for headers, body hash, title, and JS hash
+- [x] Dead-host suppression and retry/backoff history
+- [x] Safe exposure checks for panels, debug pages, and config leaks
 
 ## Traffic Control And Safety
 
