@@ -2,10 +2,13 @@
 
 from vrp_hunt.ui.dashboard import (
     DashboardApproval,
+    DashboardArtifactPreview,
     DashboardData,
     DashboardEvidence,
     DashboardFinding,
+    DashboardProgramOverview,
     DashboardSummary,
+    DashboardTimelineEntry,
     DashboardWarning,
     build_dashboard_data,
     render_dashboard_html,
@@ -14,10 +17,13 @@ from vrp_hunt.ui.dashboard import (
 
 __all__ = [
     "DashboardApproval",
+    "DashboardArtifactPreview",
     "DashboardData",
     "DashboardEvidence",
     "DashboardFinding",
+    "DashboardProgramOverview",
     "DashboardSummary",
+    "DashboardTimelineEntry",
     "DashboardWarning",
     "build_dashboard_data",
     "render_dashboard_html",

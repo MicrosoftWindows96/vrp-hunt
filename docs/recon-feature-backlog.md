@@ -121,8 +121,8 @@
 ## UI And Review
 
 - [x] UI dashboard for assets, phases, findings, and approvals
-- [ ] Approval queue review and action buttons
-- [ ] Artifact browser with redaction-aware previews
-- [ ] Finding triage board
-- [ ] Run timeline and phase status view
-- [ ] Program and scope overview page
+- [x] Approval queue review and action buttons
+- [x] Artifact browser with redaction-aware previews
+- [x] Finding triage board
+- [x] Run timeline and phase status view
+- [x] Program and scope overview page

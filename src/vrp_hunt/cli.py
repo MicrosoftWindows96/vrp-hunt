@@ -1391,6 +1391,7 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--finding", type=Path, action="append", default=[])
     dashboard.add_argument("--report", type=Path, action="append", default=[])
     dashboard.add_argument("--summary-json", type=Path, action="append", default=[])
+    dashboard.add_argument("--program-registry", type=Path, action="append", default=[])
     dashboard.add_argument("--output", type=Path, required=True)
 
     live = subparsers.add_parser("live-recon", help="Run one approved live recon tool")
@@ -2892,6 +2893,7 @@ def _dashboard(args: argparse.Namespace) -> int:
         findings=args.finding,
         reports=args.report,
         summary_json=args.summary_json,
+        program_registries=args.program_registry,
     )
     write_dashboard(data, args.output)
     print(
@@ -2902,7 +2904,10 @@ def _dashboard(args: argparse.Namespace) -> int:
                 "approvals": len(data.approvals),
                 "findings": len(data.findings),
                 "evidence": len(data.evidence),
+                "artifacts": len(data.artifacts),
                 "summaries": len(data.summaries),
+                "timeline": len(data.timeline),
+                "programs": len(data.programs),
                 "warnings": len(data.warnings),
             },
             indent=2,

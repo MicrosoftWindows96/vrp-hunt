@@ -6,6 +6,7 @@ import html
 import json
 import re
 from collections import Counter
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypeVar
@@ -16,6 +17,7 @@ from pydantic import Field
 from vrp_hunt.agent.artifacts import AgentArtifactBundle
 from vrp_hunt.guardrails.models import StrictModel
 from vrp_hunt.playbooks import EvidenceItem, FindingArtifact
+from vrp_hunt.programs import ProgramRegistryLoadError, load_program_registry
 from vrp_hunt.recon import Asset
 from vrp_hunt.reporting import ReportDraft
 
@@ -24,6 +26,8 @@ TOKEN_PATTERNS = (
     re.compile(r"\bAIza[0-9A-Za-z_-]{12,}\b"),
     re.compile(r"(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token)=([^&\s]+)"),
 )
+TEXT_PREVIEW_KINDS = {"http", "note", "burp", "har", "tool_versions"}
+MAX_ARTIFACT_PREVIEW_BYTES = 4096
 ModelT = TypeVar("ModelT", bound=StrictModel)
 
 
@@ -35,6 +39,8 @@ class DashboardWarning(StrictModel):
 class DashboardApproval(StrictModel):
     source: str = Field(min_length=1)
     command: str = Field(min_length=1)
+    approval_id: str = Field(min_length=1)
+    risk: str = Field(default="review")
 
 
 class DashboardEvidence(StrictModel):
@@ -43,6 +49,15 @@ class DashboardEvidence(StrictModel):
     description: str = Field(min_length=1)
     path_or_ref: str = Field(min_length=1)
     redacted: bool
+
+
+class DashboardArtifactPreview(StrictModel):
+    finding_id: str = Field(min_length=1)
+    kind: str = Field(min_length=1)
+    path_or_ref: str = Field(min_length=1)
+    preview: str = Field(min_length=1)
+    redacted: bool = True
+    source_exists: bool = False
 
 
 class DashboardFinding(StrictModel):
@@ -61,6 +76,23 @@ class DashboardSummary(StrictModel):
     values: dict[str, str] = Field(default_factory=dict)
 
 
+class DashboardTimelineEntry(StrictModel):
+    source: str = Field(min_length=1)
+    phase: str = Field(min_length=1)
+    status: str = Field(min_length=1)
+    detail: str = ""
+
+
+class DashboardProgramOverview(StrictModel):
+    program_id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    platform: str = Field(min_length=1)
+    scope_count: int = Field(ge=0)
+    reward_eligible_scope_count: int = Field(ge=0)
+    exclusion_count: int = Field(ge=0)
+    safe_harbor: str = Field(min_length=1)
+
+
 class DashboardData(StrictModel):
     title: str = Field(min_length=1)
     generated_at: datetime
@@ -68,7 +100,10 @@ class DashboardData(StrictModel):
     approvals: list[DashboardApproval] = Field(default_factory=list)
     findings: list[DashboardFinding] = Field(default_factory=list)
     evidence: list[DashboardEvidence] = Field(default_factory=list)
+    artifacts: list[DashboardArtifactPreview] = Field(default_factory=list)
     summaries: list[DashboardSummary] = Field(default_factory=list)
+    timeline: list[DashboardTimelineEntry] = Field(default_factory=list)
+    programs: list[DashboardProgramOverview] = Field(default_factory=list)
     warnings: list[DashboardWarning] = Field(default_factory=list)
 
 
@@ -81,6 +116,7 @@ def build_dashboard_data(
     findings: list[Path] | None = None,
     reports: list[Path] | None = None,
     summary_json: list[Path] | None = None,
+    program_registries: list[Path] | None = None,
     now: datetime | None = None,
 ) -> DashboardData:
     warnings: list[DashboardWarning] = []
@@ -89,6 +125,8 @@ def build_dashboard_data(
     loaded_findings: list[FindingArtifact] = []
     loaded_reports: list[ReportDraft] = []
     loaded_summaries: list[DashboardSummary] = []
+    loaded_timeline: list[DashboardTimelineEntry] = []
+    loaded_programs: list[DashboardProgramOverview] = []
 
     for path in asset_files or []:
         loaded_assets.extend(_load_assets(path, warnings))
@@ -109,18 +147,27 @@ def build_dashboard_data(
             loaded_reports.append(report)
             loaded_findings.append(report.finding)
     for path in summary_json or []:
-        summary = _load_summary(path, warnings)
+        summary, timeline = _load_summary(path, warnings)
         if summary is not None:
             loaded_summaries.append(summary)
+        loaded_timeline.extend(timeline)
+    for path in program_registries or []:
+        loaded_programs.extend(_load_program_overviews(path, warnings))
+
+    deduped_findings = _dedupe_findings(loaded_findings)
+    evidence = _evidence_rows(deduped_findings, loaded_reports)
 
     return DashboardData(
         title=title,
         generated_at=now or datetime.now(UTC),
         assets=_dedupe_assets(loaded_assets),
         approvals=loaded_approvals,
-        findings=_finding_rows(_dedupe_findings(loaded_findings)),
-        evidence=_evidence_rows(_dedupe_findings(loaded_findings), loaded_reports),
+        findings=_finding_rows(deduped_findings),
+        evidence=evidence,
+        artifacts=_artifact_previews(evidence),
         summaries=loaded_summaries,
+        timeline=loaded_timeline,
+        programs=loaded_programs,
         warnings=warnings,
     )
 
@@ -153,9 +200,13 @@ def render_dashboard_html(data: DashboardData) -> str:
             "</header>",
             '<nav class="tabs" aria-label="Dashboard sections">',
             '<a href="#assets">Assets</a>',
-            '<a href="#approvals">Approvals</a>',
+            '<a href="#approval-review">Approvals</a>',
             '<a href="#findings">Findings</a>',
+            '<a href="#triage">Triage</a>',
             '<a href="#evidence">Evidence</a>',
+            '<a href="#artifact-browser">Artifacts</a>',
+            '<a href="#timeline">Timeline</a>',
+            '<a href="#programs">Programs</a>',
             '<a href="#runs">Runs</a>',
             "</nav>",
             '<main class="layout">',
@@ -163,7 +214,11 @@ def render_dashboard_html(data: DashboardData) -> str:
             _assets_html(data.assets),
             _approvals_html(data.approvals),
             _findings_html(data.findings),
+            _triage_html(data.findings),
             _evidence_html(data.evidence),
+            _artifacts_html(data.artifacts),
+            _timeline_html(data.timeline),
+            _programs_html(data.programs),
             _runs_html(data.summaries, data.warnings),
             "</main>",
             "</body>",
@@ -187,6 +242,9 @@ def _summary_html(
         ("Approval Lines", str(len(data.approvals)), "explicit review queue entries"),
         ("Findings", str(len(data.findings)), finding_detail),
         ("Evidence Items", str(len(data.evidence)), "redaction-aware references"),
+        ("Artifacts", str(len(data.artifacts)), "local redacted previews"),
+        ("Timeline", str(len(data.timeline)), "phase and step status records"),
+        ("Programs", str(len(data.programs)), "scope overview entries"),
         ("Run Summaries", str(len(data.summaries)), "loaded JSON summaries"),
         ("Warnings", str(len(data.warnings)), "file load or parse issues"),
     ]
@@ -219,15 +277,19 @@ def _assets_html(assets: list[Asset]) -> str:
 def _approvals_html(approvals: list[DashboardApproval]) -> str:
     rows = [
         "<tr>"
+        f"<td>{_e(approval.approval_id)}</td>"
+        f"<td>{_e(approval.risk)}</td>"
         f"<td>{_e(approval.source)}</td>"
         f"<td><code>{_e(_redact_text(approval.command))}</code></td>"
+        f'<td><button type="button" data-command="{_e(approval.approval_id)}">Approve</button></td>'
+        f'<td><button type="button" data-command="{_e(approval.approval_id)}">Block</button></td>'
         "</tr>"
         for approval in approvals
     ]
     return _table_section(
-        section_id="approvals",
-        title="Approvals",
-        headers=["Source", "Command"],
+        section_id="approval-review",
+        title="Approval Review",
+        headers=["ID", "Risk", "Source", "Command", "Approve", "Block"],
         rows=rows,
     )
 
@@ -252,6 +314,26 @@ def _findings_html(findings: list[DashboardFinding]) -> str:
     )
 
 
+def _triage_html(findings: list[DashboardFinding]) -> str:
+    statuses = ["draft", "needs_review", "ready_for_report", "invalid"]
+    columns = []
+    for status in statuses:
+        cards = [
+            "<article class=\"triage-card\">"
+            f"<strong>{_e(finding.title)}</strong>"
+            f"<span>{_e(finding.bug_class)} / evidence {finding.evidence_count}</span>"
+            f"<small>{_e(_redact_text(finding.target))}</small>"
+            "</article>"
+            for finding in findings
+            if finding.status == status
+        ]
+        body = "".join(cards) if cards else '<p class="empty">No records loaded</p>'
+        columns.append(
+            f'<section class="triage-column"><h3>{_e(status)}</h3>{body}</section>'
+        )
+    return f'<section class="band" id="triage"><h2>Finding Triage</h2><div class="triage">{"".join(columns)}</div></section>'
+
+
 def _evidence_html(evidence: list[DashboardEvidence]) -> str:
     rows = [
         "<tr>"
@@ -267,6 +349,65 @@ def _evidence_html(evidence: list[DashboardEvidence]) -> str:
         section_id="evidence",
         title="Evidence",
         headers=["Kind", "Finding", "Description", "Path Or Ref", "Redacted"],
+        rows=rows,
+    )
+
+
+def _artifacts_html(artifacts: list[DashboardArtifactPreview]) -> str:
+    rows = [
+        "<tr>"
+        f"<td>{_e(item.kind)}</td>"
+        f"<td>{_e(item.finding_id)}</td>"
+        f"<td>{_e(_redact_text(item.path_or_ref))}</td>"
+        f"<td><pre>{_e(item.preview)}</pre></td>"
+        f"<td>{_e('yes' if item.redacted else 'no')}</td>"
+        f"<td>{_e('yes' if item.source_exists else 'no')}</td>"
+        "</tr>"
+        for item in artifacts
+    ]
+    return _table_section(
+        section_id="artifact-browser",
+        title="Artifact Browser",
+        headers=["Kind", "Finding", "Path Or Ref", "Preview", "Redacted", "Local File"],
+        rows=rows,
+    )
+
+
+def _timeline_html(timeline: list[DashboardTimelineEntry]) -> str:
+    rows = [
+        "<tr>"
+        f"<td>{_e(entry.phase)}</td>"
+        f"<td>{_e(entry.status)}</td>"
+        f"<td>{_e(entry.source)}</td>"
+        f"<td>{_e(_redact_text(entry.detail))}</td>"
+        "</tr>"
+        for entry in timeline
+    ]
+    return _table_section(
+        section_id="timeline",
+        title="Run Timeline",
+        headers=["Phase", "Status", "Source", "Detail"],
+        rows=rows,
+    )
+
+
+def _programs_html(programs: list[DashboardProgramOverview]) -> str:
+    rows = [
+        "<tr>"
+        f"<td>{_e(program.program_id)}</td>"
+        f"<td>{_e(program.name)}</td>"
+        f"<td>{_e(program.platform)}</td>"
+        f"<td>{program.scope_count}</td>"
+        f"<td>{program.reward_eligible_scope_count}</td>"
+        f"<td>{program.exclusion_count}</td>"
+        f"<td>{_e(program.safe_harbor)}</td>"
+        "</tr>"
+        for program in programs
+    ]
+    return _table_section(
+        section_id="programs",
+        title="Program Scope",
+        headers=["Program", "Name", "Platform", "Scope", "Reward Eligible", "Exclusions", "Safe Harbor"],
         rows=rows,
     )
 
@@ -354,11 +495,36 @@ def _load_approvals(path: Path, warnings: list[DashboardWarning]) -> list[Dashbo
     except OSError as exc:
         warnings.append(DashboardWarning(source=str(path), message=f"failed to read approval queue: {exc}"))
         return []
-    return [
-        DashboardApproval(source=str(path), command=line.strip())
-        for line in lines
-        if line.strip()
-    ]
+    approvals: list[DashboardApproval] = []
+    for index, line in enumerate(lines, start=1):
+        command = line.strip()
+        if not command:
+            continue
+        approvals.append(
+            DashboardApproval(
+                source=str(path),
+                command=command,
+                approval_id=_approval_id(path, index),
+                risk=_approval_risk(command),
+            )
+        )
+    return approvals
+
+
+def _approval_id(path: Path, index: int) -> str:
+    return f"{path.stem or 'approval'}-{index:04d}"
+
+
+def _approval_risk(command: str) -> str:
+    normalized = command.upper()
+    padded = f" {normalized} "
+    if " YOLO" in padded:
+        return "high"
+    if " LIVE " in padded:
+        return "live"
+    if any(token in padded for token in (" DELETE ", " POST ", " PUT ", " PATCH ")):
+        return "state-change"
+    return "review"
 
 
 def _load_model(
@@ -374,20 +540,196 @@ def _load_model(
         return None
 
 
-def _load_summary(path: Path, warnings: list[DashboardWarning]) -> DashboardSummary | None:
+def _load_summary(
+    path: Path,
+    warnings: list[DashboardWarning],
+) -> tuple[DashboardSummary | None, list[DashboardTimelineEntry]]:
     try:
         parsed = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         warnings.append(DashboardWarning(source=str(path), message=f"failed to load summary: {exc}"))
-        return None
+        return None, []
     if not isinstance(parsed, dict):
         warnings.append(DashboardWarning(source=str(path), message="summary root is not an object"))
-        return None
-    return DashboardSummary(
-        source=str(path),
-        label=_summary_label(parsed, path),
-        values=_summary_values(parsed),
+        return None, []
+    return (
+        DashboardSummary(
+            source=str(path),
+            label=_summary_label(parsed, path),
+            values=_summary_values(parsed),
+        ),
+        _timeline_entries(parsed, path),
     )
+
+
+def _load_program_overviews(
+    path: Path,
+    warnings: list[DashboardWarning],
+) -> list[DashboardProgramOverview]:
+    try:
+        registry = load_program_registry(path)
+    except ProgramRegistryLoadError as exc:
+        warnings.append(DashboardWarning(source=str(path), message=f"failed to load program registry: {exc}"))
+        return []
+    return [
+        DashboardProgramOverview(
+            program_id=program.id,
+            name=program.name,
+            platform=program.platform,
+            scope_count=len(program.scope),
+            reward_eligible_scope_count=sum(1 for scope in program.scope if scope.reward_eligible),
+            exclusion_count=len(program.exclusions),
+            safe_harbor=program.safe_harbor.summary,
+        )
+        for program in registry.programs
+    ]
+
+
+def _timeline_entries(parsed: dict[str, object], path: Path) -> list[DashboardTimelineEntry]:
+    entries: list[DashboardTimelineEntry] = []
+    source = str(path)
+    entries.extend(_phase_run_entries(parsed.get("phase_runs"), source))
+    entries.extend(_scenario_run_entries(parsed.get("scenario_runs"), source))
+    entries.extend(_derived_run_entries(parsed.get("derived_runs"), source))
+    if not entries:
+        entries.extend(_single_summary_entry(parsed, source))
+    return entries
+
+
+def _phase_run_entries(value: object, source: str) -> list[DashboardTimelineEntry]:
+    if not isinstance(value, list):
+        return []
+    entries: list[DashboardTimelineEntry] = []
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            continue
+        phase = _first_string(item, ("phase", "phase_id", "action_id")) or f"phase-{index}"
+        entries.append(
+            DashboardTimelineEntry(
+                source=source,
+                phase=phase,
+                status=_run_status(item),
+                detail=_timeline_detail(
+                    item,
+                    (
+                        "target",
+                        "target_count",
+                        "request_count",
+                        "asset_count",
+                        "artifact_count",
+                        "error_count",
+                        "skipped_derived_count",
+                    ),
+                ),
+            )
+        )
+    return entries
+
+
+def _scenario_run_entries(value: object, source: str) -> list[DashboardTimelineEntry]:
+    if not isinstance(value, list):
+        return []
+    entries: list[DashboardTimelineEntry] = []
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            continue
+        scenario_id = _first_string(item, ("scenario_id", "object_id")) or f"scenario-{index}"
+        entries.append(
+            DashboardTimelineEntry(
+                source=source,
+                phase=f"scenario:{scenario_id}",
+                status=_run_status(item),
+                detail=_timeline_detail(
+                    item,
+                    ("completed_steps", "mismatches", "errors", "artifact_count", "skipped_count"),
+                ),
+            )
+        )
+    return entries
+
+
+def _derived_run_entries(value: object, source: str) -> list[DashboardTimelineEntry]:
+    if not isinstance(value, list):
+        return []
+    entries: list[DashboardTimelineEntry] = []
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            continue
+        object_id = _first_string(item, ("object_id",)) or f"object-{index}"
+        account_id = _first_string(item, ("account_id",)) or "account"
+        entries.append(
+            DashboardTimelineEntry(
+                source=source,
+                phase=f"derived:{object_id}:{account_id}",
+                status=_run_status(item),
+                detail=_timeline_detail(
+                    item,
+                    ("request_count", "high_signal_mismatches", "errors", "artifact_count", "skipped_count"),
+                ),
+            )
+        )
+    return entries
+
+
+def _single_summary_entry(parsed: dict[str, object], source: str) -> list[DashboardTimelineEntry]:
+    label = _first_string(parsed, ("scenario_id", "matrix_id", "catalog_id", "domain", "app_id", "program_id"))
+    if label is None:
+        return []
+    return [
+        DashboardTimelineEntry(
+            source=source,
+            phase=label,
+            status=_run_status(parsed),
+            detail=_timeline_detail(
+                parsed,
+                ("completed_steps", "mismatches", "errors", "warnings", "total_assets", "total_requests"),
+            ),
+        )
+    ]
+
+
+def _run_status(item: Mapping[str, object]) -> str:
+    errors = item.get("errors")
+    if errors:
+        if isinstance(errors, int) and errors > 0:
+            return "failed"
+        if isinstance(errors, list) and errors:
+            return "failed"
+        if isinstance(errors, str) and errors.strip():
+            return "failed"
+    error_count = item.get("error_count")
+    if isinstance(error_count, int) and error_count > 0:
+        return "failed"
+    success = item.get("success")
+    if isinstance(success, bool):
+        return "ok" if success else "failed"
+    if item.get("stopped") is True:
+        return "stopped"
+    mismatches = item.get("mismatches") or item.get("high_signal_mismatches")
+    if isinstance(mismatches, int) and mismatches > 0:
+        return "needs_review"
+    return "ok"
+
+
+def _timeline_detail(item: Mapping[str, object], keys: tuple[str, ...]) -> str:
+    details: list[str] = []
+    for key in keys:
+        value = item.get(key)
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, list):
+            details.append(f"{key}={len(value)}")
+        else:
+            details.append(f"{key}={value}")
+    return ", ".join(details)
+
+
+def _first_string(item: Mapping[str, object], keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def _summary_label(parsed: dict[str, object], path: Path) -> str:
@@ -487,6 +829,42 @@ def _dedupe_evidence(evidence: list[DashboardEvidence]) -> list[DashboardEvidenc
         key = (item.finding_id, item.kind, item.description, item.path_or_ref)
         by_key.setdefault(key, item)
     return list(by_key.values())
+
+
+def _artifact_previews(evidence: list[DashboardEvidence]) -> list[DashboardArtifactPreview]:
+    return [
+        DashboardArtifactPreview(
+            finding_id=item.finding_id,
+            kind=item.kind,
+            path_or_ref=item.path_or_ref,
+            preview=preview,
+            redacted=True,
+            source_exists=source_exists,
+        )
+        for item in evidence
+        for preview, source_exists in [_artifact_preview(item)]
+    ]
+
+
+def _artifact_preview(item: DashboardEvidence) -> tuple[str, bool]:
+    path = Path(item.path_or_ref)
+    source_exists = path.is_file()
+    if item.kind not in TEXT_PREVIEW_KINDS:
+        return f"{item.kind} preview suppressed; inspect the local artifact directly.", source_exists
+    if not source_exists:
+        return "reference only; local file not found", False
+    try:
+        raw = path.read_bytes()
+        size = len(raw)
+        preview_raw = raw[:MAX_ARTIFACT_PREVIEW_BYTES]
+    except OSError as exc:
+        return f"preview unavailable: {exc}", False
+    if b"\x00" in preview_raw:
+        return "binary artifact preview suppressed", True
+    preview = preview_raw.decode("utf-8", errors="replace")
+    if size > MAX_ARTIFACT_PREVIEW_BYTES:
+        preview = f"{preview}\n[truncated after {MAX_ARTIFACT_PREVIEW_BYTES} bytes]"
+    return _redact_text(preview), True
 
 
 def _asset_counts(assets: list[Asset]) -> Counter[str]:
@@ -652,6 +1030,61 @@ td { color: var(--text); }
 code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
+}
+button {
+  min-height: 32px;
+  border: 1px solid var(--accent);
+  background: #ffffff;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: default;
+}
+button:hover, button:focus {
+  background: #ecfdf5;
+  outline: 2px solid #99f6e4;
+  outline-offset: 1px;
+}
+pre {
+  max-height: 180px;
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.triage {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.triage-column {
+  border: 1px solid var(--line);
+  background: #f8fafc;
+  padding: 10px;
+}
+.triage-column h3 {
+  margin: 0 0 8px;
+  color: var(--header);
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+.triage-card {
+  border: 1px solid var(--line);
+  background: #ffffff;
+  margin: 0 0 8px;
+  padding: 9px;
+}
+.triage-card strong,
+.triage-card span,
+.triage-card small {
+  display: block;
+}
+.triage-card span,
+.triage-card small {
+  color: var(--muted);
+  margin-top: 4px;
 }
 .empty {
   color: var(--muted);

@@ -758,8 +758,13 @@ uv run vrp-hunt dashboard \
   --approval-queue artifacts/recon-depth/approval-queue.txt \
   --artifact-bundle artifacts/pipeline/docs-baseline/findings/scenario/artifact-bundle.json \
   --summary-json artifacts/recon-depth/recon-depth-summary.json \
+  --program-registry config/program_registry.yaml \
   --output artifacts/dashboard/index.html
 ```
+
+The dashboard is a local static review surface for assets, approval queue items
+with approve/block controls, finding triage, redacted artifact previews, run
+timelines, and program scope summaries.
 
 `mobile-hypotheses` does not send traffic or run account-backed validation. It
 turns decompiled artifacts into ranked manual-review leads such as OAuth
