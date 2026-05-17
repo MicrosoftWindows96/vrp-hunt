@@ -2703,6 +2703,91 @@ def test_safe_exposure_check_cli_writes_redacted_signals(tmp_path: Path) -> None
     assert "AKIA_TEST_VALUE" not in output_path.read_text(encoding="utf-8")
 
 
+def test_traffic_control_plan_cli_writes_schedule_assets_and_cache(tmp_path: Path) -> None:
+    from vrp_hunt.recon import Asset
+
+    asset_file = tmp_path / "assets.jsonl"
+    robots_file = tmp_path / "robots-assets.jsonl"
+    output_path = tmp_path / "traffic.json"
+    assets_path = tmp_path / "traffic-assets.jsonl"
+    cache_path = tmp_path / "cache.jsonl"
+    asset_file.write_text(
+        "\n".join(
+            [
+                Asset(kind="url", value="https://www.google.com/admin?token=secret", source="httpx").model_dump_json(),
+                Asset(kind="url", value="https://www.google.com/public", source="httpx").model_dump_json(),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    robots_file.write_text(
+        Asset(
+            kind="endpoint",
+            value="https://www.google.com/admin",
+            source="robots-txt",
+            parent="https://www.google.com/robots.txt",
+            metadata={"directive": "disallow"},
+        ).model_dump_json()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "traffic-control-plan",
+            "--asset-file",
+            str(asset_file),
+            "--robots-asset-file",
+            str(robots_file),
+            "--scope-domain",
+            "google.com",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+            "--cache-output",
+            str(cache_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    asset_lines = [json.loads(line) for line in assets_path.read_text(encoding="utf-8").splitlines()]
+    cache_lines = cache_path.read_text(encoding="utf-8").splitlines()
+
+    assert exit_code == 1
+    assert output["schedule"]["blocked_count"] == 1
+    assert output["requests"][0]["parameter_names"] == ["token"]
+    assert "robots disallow:/admin" in output["warnings"][0]
+    assert asset_lines
+    assert len(cache_lines) == 2
+    assert "token=secret" not in output_path.read_text(encoding="utf-8")
+
+
+def test_tool_doctor_cli_can_render_missing_install_plan(tmp_path: Path) -> None:
+    output_path = tmp_path / "doctor.json"
+    install_path = tmp_path / "install.sh"
+
+    exit_code = main(
+        [
+            "tool-doctor",
+            "--tool",
+            "jadx",
+            "--assume-missing",
+            "--output",
+            str(output_path),
+            "--install-plan-output",
+            str(install_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 1
+    assert output["missing_tools"] == ["jadx"]
+    assert "brew install jadx" in install_path.read_text(encoding="utf-8")
+
+
 def test_app_rank_cli_writes_interesting_app_notes(tmp_path: Path) -> None:
     from vrp_hunt.recon import Asset
 

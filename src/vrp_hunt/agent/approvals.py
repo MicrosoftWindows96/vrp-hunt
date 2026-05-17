@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import Field
 
 from vrp_hunt.agent.models import AgentAction, AgentPlan, AutonomyPolicy
+from vrp_hunt.agent.risk import ModuleRiskLevel, module_risk_profile
 from vrp_hunt.guardrails.models import StrictModel
 
 ApprovalMode = Literal["block", "explicit", "prompt", "approve-all"]
@@ -22,6 +23,7 @@ class ApprovalRequiredAction(StrictModel):
     description: str = Field(min_length=1)
     sends_traffic: bool
     request_budget: int = Field(ge=0)
+    risk_level: ModuleRiskLevel
     reason: str = Field(min_length=1)
 
 
@@ -105,6 +107,10 @@ def approval_required_actions(
                 description=action.description,
                 sends_traffic=action.sends_traffic,
                 request_budget=action.request_budget,
+                risk_level=module_risk_profile(
+                    action.action_type,
+                    sends_traffic=action.sends_traffic,
+                ).risk_level,
                 reason=_approval_reason(action, policy),
             )
         )
@@ -119,7 +125,7 @@ def render_approval_prompt(required: list[ApprovalRequiredAction]) -> str:
         traffic = "traffic" if item.sends_traffic else "no-traffic"
         lines.append(
             f"[{item.index}] {item.action_type} {item.intended_action} "
-            f"{traffic} budget={item.request_budget} target={item.target}"
+            f"{traffic} risk={item.risk_level} budget={item.request_budget} target={item.target}"
         )
         lines.append(f"    {item.description}")
         lines.append(f"    reason: {item.reason}")
@@ -128,9 +134,11 @@ def render_approval_prompt(required: list[ApprovalRequiredAction]) -> str:
 
 
 def _needs_approval(action: AgentAction, policy: AutonomyPolicy) -> bool:
+    risk = module_risk_profile(action.action_type, sends_traffic=action.sends_traffic).risk_level
     return (
         action.requires_human_approval
         or action.action_type in policy.approval_required_actions
+        or risk in policy.approval_required_risk_levels
     ) and not action.human_approved
 
 
@@ -140,6 +148,9 @@ def _approval_reason(action: AgentAction, policy: AutonomyPolicy) -> str:
         reasons.append("action marked human-approval required")
     if action.action_type in policy.approval_required_actions:
         reasons.append("action type requires approval by policy")
+    risk = module_risk_profile(action.action_type, sends_traffic=action.sends_traffic).risk_level
+    if risk in policy.approval_required_risk_levels:
+        reasons.append(f"risk class requires approval: {risk}")
     return "; ".join(reasons)
 
 

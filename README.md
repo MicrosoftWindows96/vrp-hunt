@@ -441,6 +441,32 @@ approval shortcut. It approves approval-required actions for that run, but it
 does not disable guardrails, budgets, local operator policy, owned-object URL
 checks, legal acknowledgement requirements, or third-party-data stops.
 
+Plan traffic before any live step with per-host budgets, run-cache skips,
+robots-derived blocks, and rate-aware scheduling:
+
+```bash
+uv run vrp-hunt traffic-control-plan \
+  --asset-file artifacts/endpoint-mine/assets.jsonl \
+  --robots-asset-file artifacts/passive/robots-assets.jsonl \
+  --scope-domain google.com \
+  --per-host-request-budget 5 \
+  --output artifacts/traffic/plan.json \
+  --assets-output artifacts/traffic/assets.jsonl \
+  --cache-output artifacts/traffic/run-cache.jsonl
+```
+
+Inventory approved local tools and write install guidance without installing
+anything automatically:
+
+```bash
+uv run vrp-hunt tool-doctor \
+  --tool subfinder \
+  --tool httpx \
+  --tool jadx \
+  --output artifacts/tools/tool-doctor.json \
+  --install-plan-output artifacts/tools/install-plan.sh
+```
+
 Run the safe automation loop and write redacted artifacts:
 
 ```bash

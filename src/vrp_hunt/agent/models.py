@@ -10,6 +10,7 @@ from pydantic import Field, model_validator
 
 from vrp_hunt.guardrails.models import GateDecision, StrictModel, TargetKind
 from vrp_hunt.recon import Asset
+from vrp_hunt.agent.risk import ModuleRiskLevel
 from vrp_hunt.triage import TriageCandidate
 from vrp_hunt.triage.models import RewardCategory
 
@@ -48,6 +49,10 @@ def default_allowed_action_types() -> set[AgentActionType]:
         "csrf_validation",
         "report_draft",
     }
+
+
+def default_approval_required_risk_levels() -> set[ModuleRiskLevel]:
+    return {"aggressive"}
 
 
 class BrainSuggestion(StrictModel):
@@ -91,6 +96,9 @@ class AutonomyPolicy(StrictModel):
     dry_run: bool = True
     require_guardrail: bool = True
     stop_on_third_party_data: bool = True
+    approval_required_risk_levels: set[ModuleRiskLevel] = Field(
+        default_factory=default_approval_required_risk_levels
+    )
     approval_required_actions: set[AgentActionType] = Field(
         default_factory=default_approval_required_actions
     )

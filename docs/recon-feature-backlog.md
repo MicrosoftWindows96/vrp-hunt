@@ -53,13 +53,13 @@
 
 ## Traffic Control And Safety
 
-- [ ] Per-host request budget ledger
-- [ ] Global traffic scheduler with robots and rate-limit awareness
-- [ ] Passive/safe/active/aggressive module taxonomy
-- [ ] Approval gates based on module risk class
-- [ ] Run cache to avoid repeated target traffic
-- [ ] Tool health check and version inventory
-- [ ] Tool installer/doctor for subfinder, httpx, katana, nuclei, jadx, and MobSF
+- [x] Per-host request budget ledger
+- [x] Global traffic scheduler with robots and rate-limit awareness
+- [x] Passive/safe/active/aggressive module taxonomy
+- [x] Approval gates based on module risk class
+- [x] Run cache to avoid repeated target traffic
+- [x] Tool health check and version inventory
+- [x] Tool installer/doctor for subfinder, httpx, katana, nuclei, jadx, and MobSF
 
 ## Workflow Orchestration
 

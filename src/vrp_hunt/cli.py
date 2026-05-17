@@ -72,6 +72,7 @@ from vrp_hunt.agent import (
     write_recon_iteration_outputs,
 )
 from vrp_hunt.agent.runners import build_safe_offline_runner, build_safe_validation_runner
+from vrp_hunt.guardrails import RateLimitPolicy
 from vrp_hunt.guardrails.models import TargetKind
 from vrp_hunt.mobile_recon import (
     MobileArtifactImportError,
@@ -92,7 +93,9 @@ from vrp_hunt.recon import (
     Asset,
     DnsRecord,
     DnsRecordCollection,
+    HostRequestBudgetPolicy,
     PassiveSourceCatalogError,
+    RunCacheEntry,
     WildcardDnsProbe,
     asn_netblock_assets,
     asn_netblock_record_from_spec,
@@ -100,6 +103,7 @@ from vrp_hunt.recon import (
     build_dns_record_plan,
     build_recursive_passive_plan,
     build_reverse_ct_expansion_report,
+    build_traffic_control_plan,
     cdn_waf_fingerprint_assets,
     evaluate_passive_source_health,
     fingerprint_cdn_waf,
@@ -108,6 +112,7 @@ from vrp_hunt.recon import (
     ingest_historical_url_files,
     import_dns_record_files,
     load_asn_netblock_records,
+    load_run_cache_entries,
     load_words,
     load_passive_source_catalog,
     passive_source_env_template,
@@ -116,13 +121,17 @@ from vrp_hunt.recon import (
     RecursivePassiveConfig,
     SubdomainPermutationConfig,
     score_assets,
+    traffic_request_from_target,
+    traffic_requests_from_assets,
     wildcard_probe_from_asset,
     wildcard_probe_from_spec,
+    write_run_cache_entries,
 )
 from vrp_hunt.reporting import Platform, ReportDraft, render_markdown_report
 from vrp_hunt.ui import build_dashboard_data, write_dashboard
 from vrp_hunt.web_recon import (
     ApiSpecDiscoveryReport,
+    ApprovedDoctorTool,
     CspExtractionReport,
     DeadHostSuppressionConfig,
     EndpointMiningConfig,
@@ -139,6 +148,7 @@ from vrp_hunt.web_recon import (
     build_security_txt_import_bundle,
     build_sitemap_import_bundle,
     check_safe_exposures,
+    check_tool_inventory,
     discover_api_spec_assets,
     discover_graphql_endpoints,
     analyze_host_availability,
@@ -155,6 +165,7 @@ from vrp_hunt.web_recon import (
     parse_security_txt,
     parse_sitemap_xml,
     rank_interesting_apps,
+    render_tool_install_plan,
 )
 
 
@@ -227,6 +238,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _dead_host_suppress(args)
     if args.command == "safe-exposure-check":
         return _safe_exposure_check(args)
+    if args.command == "traffic-control-plan":
+        return _traffic_control_plan(args)
+    if args.command == "tool-doctor":
+        return _tool_doctor(args)
     if args.command == "app-rank":
         return _app_rank(args)
     if args.command == "endpoint-mine":
@@ -849,6 +864,53 @@ def build_parser() -> argparse.ArgumentParser:
     )
     exposure.add_argument("--output", type=Path)
     exposure.add_argument("--assets-output", type=Path, help="Optional JSONL safe-exposure note output")
+
+    traffic = subparsers.add_parser(
+        "traffic-control-plan",
+        help="Plan scoped request budgets, cache skips, robots blocks, and rate-aware schedules",
+    )
+    traffic.add_argument("--target", action="append", default=[], help="URL or host target to schedule")
+    traffic.add_argument("--asset-file", type=Path, action="append", default=[], help="Asset JSONL input")
+    traffic.add_argument(
+        "--robots-asset-file",
+        type=Path,
+        action="append",
+        default=[],
+        help="Robots asset JSONL input for crawl-delay and disallow planning",
+    )
+    traffic.add_argument("--cache-file", type=Path, action="append", default=[], help="Existing run cache JSONL")
+    traffic.add_argument(
+        "--scope-domain",
+        action="append",
+        default=[],
+        help="Allowed domain or host suffix; repeat for multiple scope roots",
+    )
+    traffic.add_argument("--global-request-budget", type=int, default=100)
+    traffic.add_argument("--per-host-request-budget", type=int, default=10)
+    traffic.add_argument("--max-repeat-target-count", type=int, default=1)
+    traffic.add_argument("--global-max-rps", type=float, default=0.5)
+    traffic.add_argument("--per-host-max-rps", type=float, default=0.2)
+    traffic.add_argument("--retry-budget", type=int, default=3)
+    traffic.add_argument("--backoff-base-seconds", type=float, default=1.0)
+    traffic.add_argument("--backoff-cap-seconds", type=float, default=60.0)
+    traffic.add_argument("--output", type=Path)
+    traffic.add_argument("--assets-output", type=Path, help="Optional JSONL traffic-control asset output")
+    traffic.add_argument("--cache-output", type=Path, help="Optional JSONL run cache entries for misses")
+
+    doctor = subparsers.add_parser(
+        "tool-doctor",
+        help="Inventory approved local recon tools and print install guidance",
+    )
+    doctor.add_argument(
+        "--tool",
+        action="append",
+        choices=("subfinder", "httpx", "katana", "nuclei", "jadx", "mobsf"),
+        default=[],
+        help="Tool to check; repeat for multiple tools",
+    )
+    doctor.add_argument("--assume-missing", action="store_true", help="Render install guidance without probing PATH")
+    doctor.add_argument("--output", type=Path)
+    doctor.add_argument("--install-plan-output", type=Path, help="Optional shell-snippet install guidance output")
 
     app_rank = subparsers.add_parser(
         "app-rank",
@@ -2114,6 +2176,71 @@ def _safe_exposure_check(args: argparse.Namespace) -> int:
     if args.assets_output is not None:
         _write_asset_jsonl(args.assets_output, report.assets)
     return 1 if report.warnings else 0
+
+
+def _traffic_control_plan(args: argparse.Namespace) -> int:
+    try:
+        assets = _load_asset_jsonl_files(args.asset_file)
+        records = [
+            record
+            for record in (traffic_request_from_target(target, source="cli") for target in args.target)
+            if record is not None
+        ]
+        records.extend(traffic_requests_from_assets(assets))
+        if not records:
+            raise ValueError("at least one --target or --asset-file record is required")
+        existing_cache: list[RunCacheEntry] = []
+        for path in args.cache_file:
+            existing_cache.extend(load_run_cache_entries(path))
+        robots_assets = _load_asset_jsonl_files(args.robots_asset_file)
+        report = build_traffic_control_plan(
+            records,
+            scope_domains=args.scope_domain,
+            budget_policy=HostRequestBudgetPolicy(
+                global_request_budget=args.global_request_budget,
+                per_host_request_budget=args.per_host_request_budget,
+                max_repeat_target_count=args.max_repeat_target_count,
+            ),
+            rate_policy=RateLimitPolicy(
+                global_max_rps=args.global_max_rps,
+                per_host_max_rps=args.per_host_max_rps,
+                retry_budget=args.retry_budget,
+                backoff_base_seconds=args.backoff_base_seconds,
+                backoff_cap_seconds=args.backoff_cap_seconds,
+            ),
+            existing_cache=existing_cache,
+            robots_assets=robots_assets,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"traffic control plan error: {exc}", file=sys.stderr)
+        return 2
+
+    output = report.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, report.assets)
+    if args.cache_output is not None:
+        write_run_cache_entries(args.cache_output, report.run_cache.new_entries)
+    return 1 if report.warnings or report.budget_ledger.violations else 0
+
+
+def _tool_doctor(args: argparse.Namespace) -> int:
+    tools = cast(list[ApprovedDoctorTool], args.tool) if args.tool else None
+    report = check_tool_inventory(tools=tools, assume_missing=args.assume_missing)
+    output = report.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+    if args.install_plan_output is not None:
+        args.install_plan_output.parent.mkdir(parents=True, exist_ok=True)
+        args.install_plan_output.write_text(render_tool_install_plan(report), encoding="utf-8")
+    return 1 if report.missing_tools else 0
 
 
 def _app_rank(args: argparse.Namespace) -> int:
