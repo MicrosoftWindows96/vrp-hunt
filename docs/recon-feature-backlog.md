@@ -110,13 +110,13 @@
 
 ## Evidence And Reporting
 
-- [ ] Evidence bundle with HTTP logs, screenshots, HAR, video, and tool versions
-- [ ] Finding deduper across runs
-- [ ] Finding confidence score with needs-manual-proof states
-- [ ] Report draft generator per platform
-- [ ] False-positive review queue
-- [ ] Impact helper tied to bug class
-- [ ] Export to Markdown, JSON, SARIF, and Faraday-compatible formats
+- [x] Evidence bundle with HTTP logs, screenshots, HAR, video, and tool versions
+- [x] Finding deduper across runs
+- [x] Finding confidence score with needs-manual-proof states
+- [x] Report draft generator per platform
+- [x] False-positive review queue
+- [x] Impact helper tied to bug class
+- [x] Export to Markdown, JSON, SARIF, and Faraday-compatible formats
 
 ## UI And Review
 

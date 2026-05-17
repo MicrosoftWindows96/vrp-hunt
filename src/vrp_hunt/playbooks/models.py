@@ -14,7 +14,7 @@ from vrp_hunt.triage.models import RewardCategory
 
 BugClass = Literal["xss", "csrf", "idor", "xsleak", "oauth", "server_side"]
 FindingStatus = Literal["draft", "needs_review", "ready_for_report", "invalid"]
-EvidenceKind = Literal["http", "screenshot", "video", "note", "burp"]
+EvidenceKind = Literal["http", "screenshot", "video", "note", "burp", "har", "tool_versions"]
 
 
 class PlaybookStep(StrictModel):

@@ -134,6 +134,10 @@ uv run vrp-hunt submission-checklist \
   --markdown-output artifacts/finding-1-report.md
 ```
 
+Reporting helpers can dedupe findings across runs, score confidence, create a
+false-positive review queue, attach impact prompts by bug class, and export
+report drafts as Markdown, JSON, SARIF, or Faraday-compatible JSON.
+
 Run a declarative recon workflow:
 
 ```bash

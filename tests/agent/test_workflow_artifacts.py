@@ -80,6 +80,18 @@ def test_evidence_capture_records_redacted_items() -> None:
     assert all(item.redacted for item in capture.items)
 
 
+def test_evidence_capture_writes_har_and_tool_versions(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    capture = EvidenceCapture(finding_id="finding-1", output_dir=tmp_path)
+    raw_har = '{"log":{"entries":[{"request":{"url":"https://example.test/?token=secret"}}]}}'
+
+    har = capture.capture_har(raw_har)
+    versions = capture.capture_tool_versions({"httpx": "1.7.1", "nuclei": "3.4.0"})
+
+    assert har.kind == "har"
+    assert versions.kind == "tool_versions"
+    assert "secret" not in (tmp_path / "finding-1" / "001-har.har").read_text(encoding="utf-8")
+
+
 def test_observation_converts_to_finding_report_and_submission_assistance() -> None:
     action = AgentAction(
         action_type="owned_account_authz",

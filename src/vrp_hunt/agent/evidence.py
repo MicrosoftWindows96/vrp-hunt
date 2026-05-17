@@ -127,6 +127,22 @@ class EvidenceCapture(StrictModel):
     ) -> EvidenceItem:
         return self._append("burp", description, path_or_ref)
 
+    def record_har(
+        self,
+        path_or_ref: str,
+        *,
+        description: str = "redacted HAR evidence export",
+    ) -> EvidenceItem:
+        return self._append("har", description, path_or_ref)
+
+    def record_tool_versions(
+        self,
+        path_or_ref: str,
+        *,
+        description: str = "tool version inventory",
+    ) -> EvidenceItem:
+        return self._append("tool_versions", description, path_or_ref)
+
     def record_note(self, note: str, *, ref: str) -> EvidenceItem:
         return self._append("note", note, ref)
 
@@ -149,6 +165,36 @@ class EvidenceCapture(StrictModel):
             raise EvidenceCaptureError("HTTP evidence exceeds size limit")
         path.write_text(content, encoding="utf-8")
         return self.record_http_log(str(path), description=description)
+
+    def capture_har(
+        self,
+        har_json: str,
+        *,
+        filename: str | None = None,
+        description: str = "redacted HAR evidence export",
+    ) -> EvidenceItem:
+        redacted = redact_text(har_json)
+        if len(redacted.encode("utf-8")) > MAX_TEXT_EVIDENCE_BYTES:
+            raise EvidenceCaptureError("HAR evidence exceeds size limit")
+        path = self._artifact_path("har", "har", filename)
+        path.write_text(redacted, encoding="utf-8")
+        return self.record_har(str(path), description=description)
+
+    def capture_tool_versions(
+        self,
+        versions: dict[str, str],
+        *,
+        filename: str | None = None,
+        description: str = "tool version inventory",
+    ) -> EvidenceItem:
+        if not versions:
+            raise EvidenceCaptureError("at least one tool version is required")
+        content = json.dumps(redact_headers(versions), indent=2, sort_keys=True) + "\n"
+        if len(content.encode("utf-8")) > MAX_TEXT_EVIDENCE_BYTES:
+            raise EvidenceCaptureError("tool version evidence exceeds size limit")
+        path = self._artifact_path("tool_versions", "json", filename)
+        path.write_text(content, encoding="utf-8")
+        return self.record_tool_versions(str(path), description=description)
 
     def capture_screenshot(
         self,
