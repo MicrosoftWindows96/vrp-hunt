@@ -49,6 +49,16 @@ def test_parse_subfinder_jsonl() -> None:
     assert assets[0].kind == "host"
     assert assets[0].value == "www.google.com"
     assert assets[0].metadata["sources"] == "crtsh"
+    assert assets[0].metadata["source_count"] == "1"
+
+
+def test_parse_subfinder_jsonl_normalizes_source_attribution() -> None:
+    assets = parse_subfinder_jsonl(
+        '{"host":"www.google.com","sources":["crtsh", "CRTSh", "alienvault, chaos"]}\n'
+    )
+
+    assert assets[0].metadata["sources"] == "crtsh,alienvault,chaos"
+    assert assets[0].metadata["source_count"] == "3"
 
 
 def test_parse_amass_text() -> None:

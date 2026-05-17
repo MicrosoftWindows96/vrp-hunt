@@ -14,18 +14,18 @@
 
 ## Scope And Program Intelligence
 
-- [ ] Scope ingestion from HackerOne, Bugcrowd, Intigriti, and public JSON
+- [x] Scope ingestion from HackerOne, Bugcrowd, Intigriti, and public JSON
 - [X] Program profile records for rewards, exclusions, safe harbor, and rate limits
 - [X] Scope-normalized target registry with in-scope/out-of-scope proofs
 - [X] Scope diff watcher like bbscope's fresh-target model
 - [X] Asset freshness scoring
 - [X] Fresh-target alerts
-- [ ] Submission checklist against program rules
+- [x] Submission checklist against program rules
 
 ## Passive Recon And Asset Discovery
 
 - [X] Passive source manager for API keys and provider health
-- [ ] Subdomain source attribution and confidence scoring
+- [x] Subdomain source attribution and confidence scoring
 - [ ] Wildcard DNS detection and elimination
 - [ ] DNS record collector for CNAME, MX, TXT, NS, CAA, DMARC, and SPF
 - [ ] CDN/WAF fingerprinting

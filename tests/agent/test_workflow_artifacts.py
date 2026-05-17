@@ -19,6 +19,7 @@ from vrp_hunt.agent import (
     finding_report_from_observation,
     report_draft_from_finding,
 )
+from vrp_hunt.programs import load_program_registry
 from vrp_hunt.recon import Asset
 
 
@@ -114,6 +115,56 @@ def test_observation_converts_to_finding_report_and_submission_assistance() -> N
     assert report.evidence.finding_id == finding.finding_id
     assert finding.title in assistance.markdown
     assert any(item.name == "owned-accounts" and item.passed for item in assistance.checklist)
+
+
+def test_submission_assistance_checks_program_rules() -> None:
+    action = AgentAction(
+        action_type="idor_validation",
+        target_kind="url",
+        target="https://accounts.google.com/profile",
+        intended_action="idor_testing",
+        description="Prepare owned-account IDOR validation.",
+    )
+    observation = AgentObservation(
+        action_id=action.action_id,
+        success=True,
+        assets=[Asset(kind="url", value=action.target, source="burp")],
+    )
+    finding = finding_from_observation(action, observation)
+    report = report_draft_from_finding(finding, researcher_accounts=["acct-a", "acct-b"])
+
+    assistance = build_submission_assistance(report, registry=load_program_registry())
+    checklist = {item.name: item for item in assistance.checklist}
+
+    assert assistance.program_decisions[0].program_id == "google-alphabet-vrp"
+    assert checklist["program-scope"].passed
+    assert checklist["reward-eligible"].passed
+    assert checklist["program-safe-harbor"].passed
+
+
+def test_submission_assistance_blocks_out_of_scope_program_targets() -> None:
+    action = AgentAction(
+        action_type="idor_validation",
+        target_kind="url",
+        target="https://foo.appspot.com/private",
+        intended_action="idor_testing",
+        description="Prepare owned-account IDOR validation.",
+    )
+    observation = AgentObservation(
+        action_id=action.action_id,
+        success=True,
+        assets=[Asset(kind="url", value=action.target, source="burp")],
+    )
+    finding = finding_from_observation(action, observation)
+    report = report_draft_from_finding(finding, researcher_accounts=["acct-a", "acct-b"])
+
+    assistance = build_submission_assistance(report, registry=load_program_registry())
+    checklist = {item.name: item for item in assistance.checklist}
+
+    assert not assistance.ready
+    assert assistance.program_decisions[0].decision == "OUT_OF_SCOPE"
+    assert not checklist["program-scope"].passed
+    assert not checklist["program-exclusions"].passed
 
 
 def test_observation_converts_to_structured_artifact_record() -> None:

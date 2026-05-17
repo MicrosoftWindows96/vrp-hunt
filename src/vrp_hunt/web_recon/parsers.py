@@ -28,11 +28,12 @@ def parse_subfinder_jsonl(output: str, *, source: str = "subfinder") -> list[Ass
                     host = raw_host
                 raw_sources = parsed.get("sources") or parsed.get("source")
                 if isinstance(raw_sources, list):
-                    sources = ",".join(str(item) for item in raw_sources)
+                    sources = ",".join(_source_tokens(raw_sources))
                 elif isinstance(raw_sources, str):
-                    sources = raw_sources
+                    sources = ",".join(_source_tokens([raw_sources]))
         if host:
-            assets.append(Asset(kind="host", value=host.lower(), source=source, metadata={"sources": sources}))
+            metadata = {"sources": sources, "source_count": str(len(sources.split(",")))} if sources else {}
+            assets.append(Asset(kind="host", value=host.lower(), source=source, metadata=metadata))
     return assets
 
 
@@ -148,6 +149,18 @@ def _metadata(parsed: dict[object, object], keys: list[str]) -> dict[str, str]:
         if value is not None:
             metadata[key] = str(value)
     return metadata
+
+
+def _source_tokens(values: list[object]) -> list[str]:
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for token in str(value).replace(";", ",").split(","):
+            normalized = token.strip().lower()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                tokens.append(normalized)
+    return tokens
 
 
 def _first_string(parsed: dict[object, object], keys: list[str]) -> str | None:

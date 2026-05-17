@@ -15,10 +15,20 @@ def default_source_confidence_weights() -> dict[str, float]:
         "seed": 0.95,
         "httpx": 0.9,
         "katana": 0.85,
+        "censys": 0.8,
+        "chaos": 0.8,
+        "securitytrails": 0.8,
+        "shodan": 0.8,
         "subfinder": 0.75,
+        "alienvault": 0.7,
+        "certspotter": 0.7,
         "crtsh": 0.7,
+        "github": 0.65,
+        "fofa": 0.65,
         "wayback": 0.65,
         "urlscan": 0.65,
+        "anubis": 0.6,
+        "hackertarget": 0.6,
         "nuclei": 0.6,
         "cli": 0.5,
     }
@@ -44,6 +54,7 @@ class AssetScoringProfile(StrictModel):
     status_code_boost: float = Field(default=0.05, ge=0, le=0.2)
     parent_boost: float = Field(default=0.03, ge=0, le=0.2)
     metadata_boost: float = Field(default=0.02, ge=0, le=0.2)
+    multi_source_boost: float = Field(default=0.05, ge=0, le=0.2)
 
     @field_validator("source_confidence")
     @classmethod
@@ -70,6 +81,7 @@ class AssetScore(StrictModel):
     priority: float = Field(ge=0, le=1)
     age_days: float = Field(ge=0)
     reasons: list[str] = Field(default_factory=list)
+    attributed_sources: list[str] = Field(default_factory=list)
 
 
 class AssetScoreReport(StrictModel):
@@ -108,7 +120,7 @@ def score_asset(
     generated_at = now or datetime.now(UTC)
     age_days = _age_days(asset, generated_at)
     freshness = _freshness_score(age_days)
-    confidence, reasons = _confidence_score(asset, scoring_profile)
+    confidence, reasons, attributed_sources = _confidence_score(asset, scoring_profile)
     priority = _clamp((confidence * 0.7) + (freshness * 0.3))
     reasons.append(f"freshness={freshness:.2f} from age_days={age_days:.2f}")
     return AssetScore(
@@ -118,18 +130,28 @@ def score_asset(
         priority=priority,
         age_days=age_days,
         reasons=reasons,
+        attributed_sources=attributed_sources,
     )
 
 
-def _confidence_score(asset: Asset, profile: AssetScoringProfile) -> tuple[float, list[str]]:
-    source_key = asset.source.lower()
-    source_weight = profile.source_confidence.get(source_key, profile.default_source_confidence)
+def _confidence_score(asset: Asset, profile: AssetScoringProfile) -> tuple[float, list[str], list[str]]:
+    attributed_sources = _attributed_sources(asset)
+    weighted_sources = [
+        (source, profile.source_confidence.get(source, profile.default_source_confidence))
+        for source in attributed_sources
+    ]
+    best_source, source_weight = max(weighted_sources, key=lambda item: item[1])
     kind_weight = profile.kind_confidence[asset.kind]
     confidence = (source_weight + kind_weight) / 2
     reasons = [
-        f"source={asset.source} weight={source_weight:.2f}",
+        f"source={best_source} weight={source_weight:.2f}",
         f"kind={asset.kind} weight={kind_weight:.2f}",
     ]
+    if len(attributed_sources) > 1:
+        confidence += profile.multi_source_boost
+        reasons.append(
+            f"multi_source_boost={profile.multi_source_boost:.2f} from {','.join(attributed_sources)}"
+        )
     if asset.parent:
         confidence += profile.parent_boost
         reasons.append(f"parent_boost={profile.parent_boost:.2f}")
@@ -139,7 +161,27 @@ def _confidence_score(asset: Asset, profile: AssetScoringProfile) -> tuple[float
     if _has_status_code(asset):
         confidence += profile.status_code_boost
         reasons.append(f"status_code_boost={profile.status_code_boost:.2f}")
-    return _clamp(confidence), reasons
+    return _clamp(confidence), reasons, attributed_sources
+
+
+def _attributed_sources(asset: Asset) -> list[str]:
+    sources: list[str] = []
+    seen: set[str] = set()
+    for value in [asset.source, *_metadata_source_values(asset)]:
+        normalized = value.strip().lower()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            sources.append(normalized)
+    return sources
+
+
+def _metadata_source_values(asset: Asset) -> list[str]:
+    values: list[str] = []
+    for key in ("sources", "source", "providers", "discovery_sources"):
+        raw_value = asset.metadata.get(key)
+        if raw_value:
+            values.extend(raw_value.replace(";", ",").split(","))
+    return values
 
 
 def _age_days(asset: Asset, now: datetime) -> float:

@@ -1542,6 +1542,106 @@ def test_program_diff_cli_outputs_fresh_targets(
     assert output["fresh_targets"][0]["entry_id"] == "fresh-google-host"
 
 
+def test_program_ingest_cli_writes_registry(
+    tmp_path: Path,
+    capsys,  # type: ignore[no-untyped-def]
+) -> None:
+    input_path = tmp_path / "h1.json"
+    output_path = tmp_path / "registry.json"
+    input_path.write_text(
+        json.dumps(
+            {
+                "handle": "google",
+                "name": "Google VRP",
+                "structured_scopes": [
+                    {
+                        "asset_identifier": "*.google.com",
+                        "asset_type": "WILDCARD",
+                        "eligible_for_submission": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "program-ingest",
+            "--input",
+            str(input_path),
+            "--source",
+            "hackerone",
+            "--captured-date",
+            "2026-05-16",
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    written = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert output["source"] == "hackerone"
+    assert output["scope_count"] == 1
+    assert written["programs"][0]["scope"][0]["value"] == "google.com"
+
+
+def test_submission_checklist_cli_writes_assistance_and_markdown_for_draft_report(
+    tmp_path: Path,
+    capsys,  # type: ignore[no-untyped-def]
+) -> None:
+    from vrp_hunt.agent import (
+        AgentAction,
+        AgentObservation,
+        finding_from_observation,
+        report_draft_from_finding,
+    )
+    from vrp_hunt.recon import Asset
+
+    action = AgentAction(
+        action_type="idor_validation",
+        target_kind="url",
+        target="https://accounts.google.com/profile",
+        intended_action="idor_testing",
+        description="Prepare owned-account IDOR validation.",
+    )
+    observation = AgentObservation(
+        action_id=action.action_id,
+        success=True,
+        assets=[Asset(kind="url", value=action.target, source="burp")],
+    )
+    finding = finding_from_observation(action, observation)
+    report = report_draft_from_finding(finding, researcher_accounts=["owned-a", "owned-b"])
+    report_path = tmp_path / "report.json"
+    output_path = tmp_path / "submission-assistance.json"
+    markdown_path = tmp_path / "report.md"
+    report_path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+
+    exit_code = main(
+        [
+            "submission-checklist",
+            "--report",
+            str(report_path),
+            "--output",
+            str(output_path),
+            "--markdown-output",
+            str(markdown_path),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    written = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 1
+    assert not output["ready"]
+    assert output["program_decisions"][0]["program_id"] == "google-alphabet-vrp"
+    assert any(item["name"] == "program-scope" and item["passed"] for item in output["checklist"])
+    assert not written["ready"]
+    assert "Draft IDOR candidate" in markdown_path.read_text(encoding="utf-8")
+
+
 def test_recon_workflow_cli_runs_yaml_workflow(
     tmp_path: Path,
     monkeypatch,  # type: ignore[no-untyped-def]

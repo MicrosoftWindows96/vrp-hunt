@@ -7,6 +7,7 @@ import json
 import os
 import sys
 from collections.abc import Mapping, Sequence
+from datetime import date
 from pathlib import Path
 from typing import cast
 
@@ -44,6 +45,7 @@ from vrp_hunt.agent import (
     artifact_bundle_from_derived_http_check,
     artifact_bundle_from_owned_browser_scenario,
     build_agent_brain,
+    build_submission_assistance,
     build_owned_account_crawl_plan,
     build_agent_plan,
     cookie_header_from_env,
@@ -78,7 +80,11 @@ from vrp_hunt.mobile_recon import (
 )
 from vrp_hunt.programs import (
     ProgramRegistryLoadError,
+    ScopeIngestionError,
+    ScopeIngestionOptions,
+    ScopeIngestionSource,
     diff_program_registries,
+    ingest_scope_export,
     load_program_registry,
     match_program_scope,
 )
@@ -90,7 +96,7 @@ from vrp_hunt.recon import (
     passive_source_env_template,
     score_assets,
 )
-from vrp_hunt.reporting import Platform, render_markdown_report
+from vrp_hunt.reporting import Platform, ReportDraft, render_markdown_report
 from vrp_hunt.ui import build_dashboard_data, write_dashboard
 from vrp_hunt.web_recon import (
     EndpointMiningConfig,
@@ -120,6 +126,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _program_match(args)
     if args.command == "program-diff":
         return _program_diff(args)
+    if args.command == "program-ingest":
+        return _program_ingest(args)
     if args.command == "passive-sources":
         return _passive_sources(args)
     if args.command == "passive-sources-env-template":
@@ -152,6 +160,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _mobile_hypotheses(args)
     if args.command == "mobile-import":
         return _mobile_import(args)
+    if args.command == "submission-checklist":
+        return _submission_checklist(args)
     if args.command == "dashboard":
         return _dashboard(args)
     if args.command == "live-recon":
@@ -309,6 +319,24 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print only fresh reward-eligible scope targets",
     )
+
+    program_ingest = subparsers.add_parser(
+        "program-ingest",
+        help="Convert local HackerOne, Bugcrowd, Intigriti, or public JSON scope exports",
+    )
+    program_ingest.add_argument("--input", type=Path, required=True)
+    program_ingest.add_argument(
+        "--source",
+        choices=("auto", "hackerone", "bugcrowd", "intigriti", "public_json"),
+        default="auto",
+    )
+    program_ingest.add_argument("--program-id")
+    program_ingest.add_argument("--name")
+    program_ingest.add_argument("--platform")
+    program_ingest.add_argument("--policy-url")
+    program_ingest.add_argument("--captured-date")
+    program_ingest.add_argument("--version")
+    program_ingest.add_argument("--output", type=Path)
 
     passive_sources = subparsers.add_parser(
         "passive-sources",
@@ -653,6 +681,19 @@ def build_parser() -> argparse.ArgumentParser:
     mobile_import.add_argument("--limit", type=int, default=10, help="Maximum hypotheses to emit")
     mobile_import.add_argument("--output-dir", type=Path, help="Optional directory for import files")
     mobile_import.add_argument("--assets-output", type=Path, help="Optional JSONL asset output path")
+
+    submission = subparsers.add_parser(
+        "submission-checklist",
+        help="Validate a saved ReportDraft against report quality and program rules",
+    )
+    submission.add_argument("--report", type=Path, required=True, help="ReportDraft JSON path")
+    submission.add_argument("--registry", type=Path, default=None)
+    submission.add_argument("--output", type=Path, help="Optional SubmissionAssistance JSON path")
+    submission.add_argument(
+        "--markdown-output",
+        type=Path,
+        help="Optional Markdown report output path",
+    )
 
     dashboard = subparsers.add_parser(
         "dashboard",
@@ -1024,6 +1065,36 @@ def _program_diff(args: argparse.Namespace) -> int:
         )
         return 0
     print(diff.model_dump_json(indent=2))
+    return 0
+
+
+def _program_ingest(args: argparse.Namespace) -> int:
+    try:
+        captured_date = date.fromisoformat(args.captured_date) if args.captured_date else date.today()
+    except ValueError:
+        print("program ingest error: --captured-date must be YYYY-MM-DD", file=sys.stderr)
+        return 2
+    try:
+        report = ingest_scope_export(
+            args.input,
+            options=ScopeIngestionOptions(
+                source=cast(ScopeIngestionSource, args.source),
+                program_id=args.program_id,
+                name=args.name,
+                platform=args.platform,
+                policy_url=args.policy_url,
+                captured_date=captured_date,
+                version=args.version,
+            ),
+        )
+    except ScopeIngestionError as exc:
+        print(f"program ingest error: {exc}", file=sys.stderr)
+        return 2
+    output = report.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(report.registry.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    print(output)
     return 0
 
 
@@ -1414,6 +1485,26 @@ def _mobile_import(args: argparse.Namespace) -> int:
         _write_asset_jsonl(args.assets_output, report.assets)
     print(output)
     return 0
+
+
+def _submission_checklist(args: argparse.Namespace) -> int:
+    try:
+        report = ReportDraft.model_validate_json(args.report.read_text(encoding="utf-8"))
+        registry = load_program_registry(args.registry) if args.registry else load_program_registry()
+        assistance = build_submission_assistance(report, registry=registry)
+    except (OSError, ValueError, ProgramRegistryLoadError) as exc:
+        print(f"submission checklist error: {exc}", file=sys.stderr)
+        return 2
+
+    output = assistance.model_dump_json(indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(output + "\n", encoding="utf-8")
+    if args.markdown_output is not None:
+        args.markdown_output.parent.mkdir(parents=True, exist_ok=True)
+        args.markdown_output.write_text(assistance.markdown, encoding="utf-8")
+    print(output)
+    return 0 if assistance.ready else 1
 
 
 def _dashboard(args: argparse.Namespace) -> int:

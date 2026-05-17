@@ -114,6 +114,26 @@ uv run vrp-hunt program-diff \
   --fresh-only
 ```
 
+Convert a local platform scope export into the registry schema:
+
+```bash
+uv run vrp-hunt program-ingest \
+  --source hackerone \
+  --input exports/google-hackerone-scope.json \
+  --captured-date 2026-05-16 \
+  --output artifacts/programs/google-registry.json
+```
+
+Validate a saved report draft against quality checks and the local program
+registry before manual submission:
+
+```bash
+uv run vrp-hunt submission-checklist \
+  --report artifacts/finding-1-report.json \
+  --output artifacts/finding-1-submission-checklist.json \
+  --markdown-output artifacts/finding-1-report.md
+```
+
 Run a declarative recon workflow:
 
 ```bash
@@ -130,7 +150,8 @@ uv run vrp-hunt passive-sources
 uv run vrp-hunt passive-sources-env-template --output .env.passive.example
 ```
 
-Score existing recon assets by confidence, freshness, and priority:
+Score existing recon assets by confidence, freshness, passive source
+attribution, and priority:
 
 ```bash
 uv run vrp-hunt asset-score \
