@@ -14,6 +14,15 @@ from vrp_hunt.mobile_recon.hypotheses import (
     build_mobile_static_hypotheses,
     build_mobile_static_report,
 )
+from vrp_hunt.mobile_recon.importer import (
+    MobileArtifactImportError,
+    MobileArtifactImportReport,
+    MobileImportRecord,
+    import_apk_artifact,
+    import_jadx_output,
+    import_mobile_artifacts,
+    import_mobsf_static_report,
+)
 from vrp_hunt.mobile_recon.models import MobileAppTarget, MobileReconConfig
 from vrp_hunt.mobile_recon.tools import (
     build_emulator_list_command,
@@ -26,6 +35,9 @@ from vrp_hunt.mobile_recon.tools import (
 
 __all__ = [
     "MobileAppTarget",
+    "MobileArtifactImportError",
+    "MobileArtifactImportReport",
+    "MobileImportRecord",
     "MobileReconAdapter",
     "MobileReconConfig",
     "MobileStaticHypothesis",
@@ -41,6 +53,10 @@ __all__ = [
     "extract_mobile_endpoints",
     "extract_mobile_risk_notes",
     "extract_mobile_secret_notes",
+    "import_apk_artifact",
+    "import_jadx_output",
+    "import_mobile_artifacts",
+    "import_mobsf_static_report",
     "parse_android_manifest",
     "parse_dynamic_messages",
 ]

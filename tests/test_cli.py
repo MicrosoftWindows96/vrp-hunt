@@ -1181,6 +1181,95 @@ def test_mobile_hypotheses_cli_writes_report(
     assert (output_dir / "mobile-static-report.json").exists()
 
 
+def test_mobile_import_cli_writes_report_and_assets(
+    tmp_path: Path,
+    capsys,  # type: ignore[no-untyped-def]
+) -> None:
+    mobsf_report = tmp_path / "mobsf.json"
+    mobsf_report.write_text(
+        json.dumps(
+            {
+                "package_name": "com.google.example",
+                "urls": ["https://accounts.google.com/o/oauth2/v2/auth?client_id=owned"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "mobile-import"
+
+    exit_code = main(
+        [
+            "mobile-import",
+            "--app-id",
+            "com.google.example",
+            "--mobsf-report",
+            str(mobsf_report),
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["import_count"] == 1
+    assert output["hypotheses"][0]["title"] == "OAuth redirect and account-switching review"
+    assert (output_dir / "mobile-import-report.json").exists()
+    assert (output_dir / "assets.jsonl").exists()
+
+
+def test_mobile_import_cli_requires_artifact(capsys) -> None:  # type: ignore[no-untyped-def]
+    exit_code = main(["mobile-import", "--app-id", "com.google.example"])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "at least one" in captured.err
+
+
+def test_dashboard_cli_writes_static_html(
+    tmp_path: Path,
+    capsys,  # type: ignore[no-untyped-def]
+) -> None:
+    assets_path = tmp_path / "assets.jsonl"
+    assets_path.write_text(
+        json.dumps(
+            {
+                "kind": "url",
+                "value": "https://accounts.google.com/o/oauth2/v2/auth?client_id=owned",
+                "source": "test",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    approvals_path = tmp_path / "approval-queue.txt"
+    approvals_path.write_text("APPROVE LIVE HTTPX https://www.google.com\n", encoding="utf-8")
+    output_path = tmp_path / "dashboard.html"
+
+    exit_code = main(
+        [
+            "dashboard",
+            "--asset-file",
+            str(assets_path),
+            "--approval-queue",
+            str(approvals_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    html = output_path.read_text(encoding="utf-8")
+
+    assert exit_code == 0
+    assert output["assets"] == 1
+    assert output["approvals"] == 1
+    assert "<html" in html
+    assert "client_id=owned" not in html
+    assert "[query keys: client_id]" in html
+
+
 def test_live_recon_cli_blocks_unauthorized_operator_before_tool_execution(
     tmp_path: Path,
     capsys,  # type: ignore[no-untyped-def]

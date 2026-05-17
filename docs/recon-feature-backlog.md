@@ -9,8 +9,8 @@
 - [X] Asset confidence and freshness scoring
 - [X] JavaScript and API endpoint mining pipeline
 - [X] Authenticated owned-account crawler feeding IDOR/OAuth/CSRF validators
-- [ ] Mobile APK/MobSF/jadx importer
-- [ ] UI dashboard for assets, approvals, evidence, and findings
+- [x] Mobile APK/MobSF/jadx importer
+- [x] UI dashboard for assets, approvals, evidence, and findings
 
 ## Scope And Program Intelligence
 
@@ -87,11 +87,11 @@
 
 ## Mobile Analysis
 
-- [ ] Mobile APK ingestion pipeline
-- [ ] jadx decompile runner with endpoint extraction
-- [ ] MobSF static-analysis importer
-- [ ] Mobile deep-link extraction
-- [ ] Mobile API base URL extraction
+- [x] Mobile APK ingestion pipeline
+- [x] jadx decompile runner with endpoint extraction
+- [x] MobSF static-analysis importer
+- [x] Mobile deep-link extraction
+- [x] Mobile API base URL extraction
 - [ ] Mobile certificate pinning indicator extraction
 - [ ] Mobile manifest permission risk summary
 
@@ -120,7 +120,7 @@
 
 ## UI And Review
 
-- [ ] UI dashboard for assets, phases, findings, and approvals
+- [x] UI dashboard for assets, phases, findings, and approvals
 - [ ] Approval queue review and action buttons
 - [ ] Artifact browser with redaction-aware previews
 - [ ] Finding triage board

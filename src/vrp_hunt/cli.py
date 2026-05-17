@@ -71,7 +71,11 @@ from vrp_hunt.agent import (
 )
 from vrp_hunt.agent.runners import build_safe_offline_runner, build_safe_validation_runner
 from vrp_hunt.guardrails.models import TargetKind
-from vrp_hunt.mobile_recon import build_mobile_static_report
+from vrp_hunt.mobile_recon import (
+    MobileArtifactImportError,
+    build_mobile_static_report,
+    import_mobile_artifacts,
+)
 from vrp_hunt.programs import (
     ProgramRegistryLoadError,
     diff_program_registries,
@@ -87,6 +91,7 @@ from vrp_hunt.recon import (
     score_assets,
 )
 from vrp_hunt.reporting import Platform, render_markdown_report
+from vrp_hunt.ui import build_dashboard_data, write_dashboard
 from vrp_hunt.web_recon import (
     EndpointMiningConfig,
     WebContentDocument,
@@ -145,6 +150,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _owned_permission_matrix(args)
     if args.command == "mobile-hypotheses":
         return _mobile_hypotheses(args)
+    if args.command == "mobile-import":
+        return _mobile_import(args)
+    if args.command == "dashboard":
+        return _dashboard(args)
     if args.command == "live-recon":
         return _live_recon(args)
     parser.print_help()
@@ -628,6 +637,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mobile.add_argument("--limit", type=int, default=10, help="Maximum hypotheses to emit")
     mobile.add_argument("--output-dir", type=Path, help="Optional directory for mobile-static-report.json")
+
+    mobile_import = subparsers.add_parser(
+        "mobile-import",
+        help="Import APK, JADX, and MobSF artifacts into mobile assets and hypotheses",
+    )
+    mobile_import.add_argument("--app-id", required=True, help="Mobile package id, e.g. com.google.android.gm")
+    mobile_import.add_argument("--apk-path", type=Path, help="Local APK artifact to fingerprint")
+    mobile_import.add_argument(
+        "--jadx-output",
+        type=Path,
+        help="JADX output directory or local decompiled text artifact",
+    )
+    mobile_import.add_argument("--mobsf-report", type=Path, help="MobSF static-analysis JSON report")
+    mobile_import.add_argument("--limit", type=int, default=10, help="Maximum hypotheses to emit")
+    mobile_import.add_argument("--output-dir", type=Path, help="Optional directory for import files")
+    mobile_import.add_argument("--assets-output", type=Path, help="Optional JSONL asset output path")
+
+    dashboard = subparsers.add_parser(
+        "dashboard",
+        help="Render a local static dashboard from assets, approvals, and finding artifacts",
+    )
+    dashboard.add_argument("--title", default="VRP Hunt Dashboard")
+    dashboard.add_argument("--asset-file", type=Path, action="append", default=[])
+    dashboard.add_argument("--approval-queue", type=Path, action="append", default=[])
+    dashboard.add_argument("--artifact-bundle", type=Path, action="append", default=[])
+    dashboard.add_argument("--finding", type=Path, action="append", default=[])
+    dashboard.add_argument("--report", type=Path, action="append", default=[])
+    dashboard.add_argument("--summary-json", type=Path, action="append", default=[])
+    dashboard.add_argument("--output", type=Path, required=True)
 
     live = subparsers.add_parser("live-recon", help="Run one approved live recon tool")
     live.add_argument("--tool", choices=("subfinder", "httpx", "katana", "nuclei", "jadx"), required=True)
@@ -1352,6 +1390,57 @@ def _mobile_hypotheses(args: argparse.Namespace) -> int:
         args.output_dir.mkdir(parents=True, exist_ok=True)
         (args.output_dir / "mobile-static-report.json").write_text(output + "\n", encoding="utf-8")
     print(output)
+    return 0
+
+
+def _mobile_import(args: argparse.Namespace) -> int:
+    try:
+        report = import_mobile_artifacts(
+            app_id=args.app_id,
+            apk_path=args.apk_path,
+            jadx_output_path=args.jadx_output,
+            mobsf_report_path=args.mobsf_report,
+            hypothesis_limit=args.limit,
+        )
+    except MobileArtifactImportError as exc:
+        print(f"mobile import error: {exc}", file=sys.stderr)
+        return 2
+    output = report.model_dump_json(indent=2)
+    if args.output_dir is not None:
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+        (args.output_dir / "mobile-import-report.json").write_text(output + "\n", encoding="utf-8")
+        _write_asset_jsonl(args.output_dir / "assets.jsonl", report.assets)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, report.assets)
+    print(output)
+    return 0
+
+
+def _dashboard(args: argparse.Namespace) -> int:
+    data = build_dashboard_data(
+        title=args.title,
+        asset_files=args.asset_file,
+        approval_queues=args.approval_queue,
+        artifact_bundles=args.artifact_bundle,
+        findings=args.finding,
+        reports=args.report,
+        summary_json=args.summary_json,
+    )
+    write_dashboard(data, args.output)
+    print(
+        json.dumps(
+            {
+                "output": str(args.output),
+                "assets": len(data.assets),
+                "approvals": len(data.approvals),
+                "findings": len(data.findings),
+                "evidence": len(data.evidence),
+                "summaries": len(data.summaries),
+                "warnings": len(data.warnings),
+            },
+            indent=2,
+        )
+    )
     return 0
 
 

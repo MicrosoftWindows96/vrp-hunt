@@ -379,6 +379,28 @@ uv run vrp-hunt mobile-hypotheses \
   --output-dir artifacts/mobile/com.google.android.gm
 ```
 
+Import APK fingerprints, JADX output, and MobSF static JSON into mobile assets:
+
+```bash
+uv run vrp-hunt mobile-import \
+  --app-id com.google.android.gm \
+  --apk-path artifacts/mobile/com.google.android.gm.apk \
+  --jadx-output artifacts/jadx/com.google.android.gm \
+  --mobsf-report artifacts/mobsf/com.google.android.gm.json \
+  --output-dir artifacts/mobile/com.google.android.gm
+```
+
+Render a local static dashboard from generated artifacts:
+
+```bash
+uv run vrp-hunt dashboard \
+  --asset-file artifacts/recon-depth/assets.jsonl \
+  --approval-queue artifacts/recon-depth/approval-queue.txt \
+  --artifact-bundle artifacts/pipeline/docs-baseline/findings/scenario/artifact-bundle.json \
+  --summary-json artifacts/recon-depth/recon-depth-summary.json \
+  --output artifacts/dashboard/index.html
+```
+
 `mobile-hypotheses` does not send traffic or run account-backed validation. It
 turns decompiled artifacts into ranked manual-review leads such as OAuth
 redirect handling, deep-link authorization boundaries, WebView bridge exposure,
