@@ -9,7 +9,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from datetime import date
 from pathlib import Path
-from typing import cast
+from typing import Any, Literal, TypeAlias, cast
 
 from vrp_hunt.agent import (
     ActionBudget,
@@ -93,16 +93,29 @@ from vrp_hunt.programs import (
 )
 from vrp_hunt.recon import (
     Asset,
+    CiCdExposureReport,
+    CloudBucketCheckPlan,
     DnsRecord,
     DnsRecordCollection,
+    ContainerMetadataReport,
+    GitHubDiscoveryPlan,
     HostRequestBudgetPolicy,
+    NucleiAllowlistProfile,
+    NucleiTemplateAuditReport,
+    NucleiTemplateMetadata,
     PassiveSourceCatalogError,
     RunCacheEntry,
+    SecretScanImportReport,
+    VulnerabilityMatchReport,
+    VulnerabilityReference,
     WildcardDnsProbe,
     asn_netblock_assets,
     asn_netblock_record_from_spec,
+    audit_nuclei_templates,
     build_asn_netblock_report,
+    build_cloud_bucket_check_plan,
     build_dns_record_plan,
+    build_github_discovery_plan,
     build_recursive_passive_plan,
     build_reverse_ct_expansion_report,
     build_traffic_control_plan,
@@ -111,7 +124,9 @@ from vrp_hunt.recon import (
     fingerprint_cdn_waf,
     filter_wildcard_dns_assets,
     generate_subdomain_permutations,
+    import_container_metadata,
     ingest_historical_url_files,
+    import_secret_scan_results,
     import_dns_record_files,
     load_asn_netblock_records,
     load_run_cache_entries,
@@ -123,6 +138,8 @@ from vrp_hunt.recon import (
     RecursivePassiveConfig,
     SubdomainPermutationConfig,
     score_assets,
+    detect_cicd_exposures,
+    match_cves_to_technologies,
     traffic_request_from_target,
     traffic_requests_from_assets,
     wildcard_probe_from_asset,
@@ -246,6 +263,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _traffic_control_plan(args)
     if args.command == "tool-doctor":
         return _tool_doctor(args)
+    if args.command == "scanner-nuclei-audit":
+        return _scanner_nuclei_audit(args)
+    if args.command == "scanner-vuln-match":
+        return _scanner_vuln_match(args)
+    if args.command == "scanner-cloud-plan":
+        return _scanner_cloud_plan(args)
+    if args.command == "scanner-github-plan":
+        return _scanner_github_plan(args)
+    if args.command == "scanner-secret-import":
+        return _scanner_secret_import(args)
+    if args.command == "scanner-cicd-import":
+        return _scanner_cicd_import(args)
+    if args.command == "scanner-container-import":
+        return _scanner_container_import(args)
     if args.command == "app-rank":
         return _app_rank(args)
     if args.command == "endpoint-mine":
@@ -935,6 +966,72 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--assume-missing", action="store_true", help="Render install guidance without probing PATH")
     doctor.add_argument("--output", type=Path)
     doctor.add_argument("--install-plan-output", type=Path, help="Optional shell-snippet install guidance output")
+
+    nuclei_audit = subparsers.add_parser(
+        "scanner-nuclei-audit",
+        help="Audit saved nuclei template metadata against a safe allowlist profile",
+    )
+    nuclei_audit.add_argument("--profile", type=Path, required=True)
+    nuclei_audit.add_argument(
+        "--template-metadata",
+        type=Path,
+        action="append",
+        default=[],
+        help="Saved nuclei template metadata JSON/JSONL; repeat for multiple files",
+    )
+    nuclei_audit.add_argument("--output", type=Path)
+
+    vuln_match = subparsers.add_parser(
+        "scanner-vuln-match",
+        help="Match technology assets against a saved CVE/KEV/CVSS catalog",
+    )
+    vuln_match.add_argument("--technology-assets", type=Path, action="append", default=[])
+    vuln_match.add_argument("--vuln-catalog", type=Path, action="append", default=[])
+    vuln_match.add_argument("--output", type=Path)
+    vuln_match.add_argument("--assets-output", type=Path, help="Optional CVE match note JSONL output")
+
+    cloud_plan = subparsers.add_parser(
+        "scanner-cloud-plan",
+        help="Generate cloud bucket candidates and metadata-only check requests",
+    )
+    cloud_plan.add_argument("--domain", action="append", default=[], help="Approved owned domain")
+    cloud_plan.add_argument("--org-token", action="append", default=[], help="Owned org/project token")
+    cloud_plan.add_argument("--output", type=Path)
+    cloud_plan.add_argument("--assets-output", type=Path, help="Optional bucket candidate JSONL output")
+
+    github_plan = subparsers.add_parser(
+        "scanner-github-plan",
+        help="Plan GitHub org, repo, code, Actions, and log searches for owned orgs",
+    )
+    github_plan.add_argument("--scope-domain", action="append", default=[])
+    github_plan.add_argument("--org", action="append", default=[], help="Approved owned GitHub org")
+    github_plan.add_argument("--output", type=Path)
+    github_plan.add_argument("--assets-output", type=Path, help="Optional GitHub query JSONL output")
+
+    secret_import = subparsers.add_parser(
+        "scanner-secret-import",
+        help="Import gitleaks/trufflehog results with secret values redacted",
+    )
+    secret_import.add_argument("--scanner", choices=("gitleaks", "trufflehog"), required=True)
+    secret_import.add_argument("--input", type=Path, action="append", default=[])
+    secret_import.add_argument("--output", type=Path)
+    secret_import.add_argument("--assets-output", type=Path, help="Optional secret finding JSONL output")
+
+    cicd_import = subparsers.add_parser(
+        "scanner-cicd-import",
+        help="Import saved CI/CD artifact, log, and Actions config metadata",
+    )
+    cicd_import.add_argument("--input", type=Path, action="append", default=[])
+    cicd_import.add_argument("--output", type=Path)
+    cicd_import.add_argument("--assets-output", type=Path, help="Optional CI/CD signal JSONL output")
+
+    container_import = subparsers.add_parser(
+        "scanner-container-import",
+        help="Import saved container/image metadata for owned repositories",
+    )
+    container_import.add_argument("--input", type=Path, action="append", default=[])
+    container_import.add_argument("--output", type=Path)
+    container_import.add_argument("--assets-output", type=Path, help="Optional image metadata JSONL output")
 
     app_rank = subparsers.add_parser(
         "app-rank",
@@ -2292,6 +2389,111 @@ def _tool_doctor(args: argparse.Namespace) -> int:
     return 1 if report.missing_tools else 0
 
 
+def _scanner_nuclei_audit(args: argparse.Namespace) -> int:
+    try:
+        if not args.template_metadata:
+            raise ValueError("at least one --template-metadata path is required")
+        profile = _load_nuclei_allowlist_profile(args.profile)
+        templates = _load_nuclei_template_metadata_files(args.template_metadata)
+        report = audit_nuclei_templates(profile, templates)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(f"scanner nuclei audit error: {exc}", file=sys.stderr)
+        return 2
+    _write_report_json(report, args.output)
+    return 1 if report.blocked_templates or report.warnings else 0
+
+
+def _scanner_vuln_match(args: argparse.Namespace) -> int:
+    try:
+        if not args.technology_assets:
+            raise ValueError("at least one --technology-assets path is required")
+        if not args.vuln_catalog:
+            raise ValueError("at least one --vuln-catalog path is required")
+        assets = _load_asset_jsonl_files(args.technology_assets)
+        references = _load_vulnerability_reference_files(args.vuln_catalog)
+        report = match_cves_to_technologies(assets, references)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(f"scanner vuln match error: {exc}", file=sys.stderr)
+        return 2
+    _write_report_json(report, args.output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, report.assets)
+    return 0
+
+
+def _scanner_cloud_plan(args: argparse.Namespace) -> int:
+    try:
+        if not args.domain:
+            raise ValueError("at least one --domain is required")
+        report = build_cloud_bucket_check_plan(args.domain, org_tokens=args.org_token)
+    except ValueError as exc:
+        print(f"scanner cloud plan error: {exc}", file=sys.stderr)
+        return 2
+    _write_report_json(report, args.output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, report.assets)
+    return 1 if report.warnings else 0
+
+
+def _scanner_github_plan(args: argparse.Namespace) -> int:
+    try:
+        if not args.scope_domain:
+            raise ValueError("at least one --scope-domain is required")
+        report = build_github_discovery_plan(scope_domains=args.scope_domain, orgs=args.org)
+    except ValueError as exc:
+        print(f"scanner github plan error: {exc}", file=sys.stderr)
+        return 2
+    _write_report_json(report, args.output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, report.assets)
+    return 1 if report.warnings else 0
+
+
+def _scanner_secret_import(args: argparse.Namespace) -> int:
+    try:
+        if not args.input:
+            raise ValueError("at least one --input path is required")
+        report = import_secret_scan_results(
+            _read_text_files(args.input),
+            scanner=cast(Literal["gitleaks", "trufflehog"], args.scanner),
+        )
+    except (OSError, ValueError) as exc:
+        print(f"scanner secret import error: {exc}", file=sys.stderr)
+        return 2
+    _write_report_json(report, args.output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, report.assets)
+    return 1 if report.warnings else 0
+
+
+def _scanner_cicd_import(args: argparse.Namespace) -> int:
+    try:
+        if not args.input:
+            raise ValueError("at least one --input path is required")
+        report = detect_cicd_exposures(_read_text_files(args.input))
+    except (OSError, ValueError) as exc:
+        print(f"scanner cicd import error: {exc}", file=sys.stderr)
+        return 2
+    _write_report_json(report, args.output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, report.assets)
+    return 1 if report.warnings else 0
+
+
+def _scanner_container_import(args: argparse.Namespace) -> int:
+    try:
+        if not args.input:
+            raise ValueError("at least one --input path is required")
+        report = import_container_metadata(_read_text_files(args.input))
+    except (OSError, ValueError) as exc:
+        print(f"scanner container import error: {exc}", file=sys.stderr)
+        return 2
+    _write_report_json(report, args.output)
+    if args.assets_output is not None:
+        _write_asset_jsonl(args.assets_output, report.assets)
+    return 1 if report.warnings else 0
+
+
 def _app_rank(args: argparse.Namespace) -> int:
     try:
         if not args.asset_file:
@@ -2940,6 +3142,190 @@ def _write_scenario_artifacts(output_dir: Path, bundle: AgentArtifactBundle) -> 
         "artifact_bundle": str(bundle_path),
         "artifacts": written,
     }
+
+
+ScannerReport: TypeAlias = (
+    NucleiTemplateAuditReport
+    | VulnerabilityMatchReport
+    | CloudBucketCheckPlan
+    | GitHubDiscoveryPlan
+    | SecretScanImportReport
+    | CiCdExposureReport
+    | ContainerMetadataReport
+)
+
+
+def _write_report_json(report: ScannerReport, output_path: Path | None) -> None:
+    output = report.model_dump_json(indent=2)
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(output + "\n", encoding="utf-8")
+    else:
+        print(output)
+
+
+def _read_text_files(paths: list[Path]) -> list[str]:
+    return [path.read_text(encoding="utf-8") for path in paths]
+
+
+def _load_nuclei_allowlist_profile(path: Path) -> NucleiAllowlistProfile:
+    parsed = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(parsed, dict):
+        raise ValueError("nuclei allowlist profile must be a JSON object")
+    return NucleiAllowlistProfile.model_validate(parsed)
+
+
+def _load_nuclei_template_metadata_files(paths: list[Path]) -> list[NucleiTemplateMetadata]:
+    templates: list[NucleiTemplateMetadata] = []
+    for path in paths:
+        for item in _json_items_from_path(path):
+            if not isinstance(item, dict):
+                continue
+            template = _nuclei_template_metadata_from_item(item)
+            if template is not None:
+                templates.append(template)
+    return templates
+
+
+def _load_vulnerability_reference_files(paths: list[Path]) -> list[VulnerabilityReference]:
+    references: list[VulnerabilityReference] = []
+    for path in paths:
+        for item in _json_items_from_path(path):
+            if not isinstance(item, dict):
+                continue
+            reference = _vulnerability_reference_from_item(item)
+            if reference is not None:
+                references.append(reference)
+    return references
+
+
+def _json_items_from_path(path: Path) -> list[Any]:
+    text = path.read_text(encoding="utf-8")
+    stripped = text.strip()
+    if not stripped:
+        return []
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        items: list[Any] = []
+        for line in text.splitlines():
+            if line.strip():
+                items.append(json.loads(line))
+        return items
+    if isinstance(parsed, list):
+        return parsed
+    if isinstance(parsed, dict):
+        for key in ("results", "items", "data", "templates", "vulnerabilities"):
+            value = parsed.get(key)
+            if isinstance(value, list):
+                return value
+        return [parsed]
+    return []
+
+
+def _nuclei_template_metadata_from_item(
+    item: Mapping[Any, Any],
+) -> NucleiTemplateMetadata | None:
+    info = item.get("info")
+    info_map = info if isinstance(info, dict) else {}
+    template_id = _first_json_string(item, ("template_id", "template-id", "id", "templateID"))
+    path = _first_json_string(
+        item,
+        ("path", "template_path", "template-path", "template", "file"),
+    )
+    if template_id is None:
+        template_id = path
+    if template_id is None or path is None:
+        return None
+    payload = {
+        "template_id": template_id,
+        "path": path,
+        "name": _first_json_string(info_map, ("name", "template_name")),
+        "severity": _first_json_string(item, ("severity",))
+        or _first_json_string(info_map, ("severity",))
+        or "unknown",
+        "tags": _json_string_list(item.get("tags") or info_map.get("tags")),
+        "authors": _json_string_list(
+            item.get("authors") or item.get("author") or info_map.get("authors") or info_map.get("author")
+        ),
+        "protocol_types": _json_string_list(
+            item.get("protocol_types")
+            or item.get("protocol")
+            or item.get("type")
+            or info_map.get("protocol_types")
+            or "http"
+        ),
+    }
+    return NucleiTemplateMetadata.model_validate(payload)
+
+
+def _vulnerability_reference_from_item(
+    item: Mapping[Any, Any],
+) -> VulnerabilityReference | None:
+    cve_id = _first_json_string(item, ("cve_id", "cve", "id", "CVE"))
+    technology = _first_json_string(item, ("technology", "product", "package", "name"))
+    if cve_id is None or technology is None:
+        return None
+    payload = {
+        "cve_id": cve_id,
+        "technology": technology,
+        "affected_versions": _json_string_list(
+            item.get("affected_versions")
+            or item.get("versions")
+            or item.get("affected")
+            or item.get("version")
+        ),
+        "cvss_score": _json_float(item.get("cvss_score") or item.get("cvss") or item.get("score")),
+        "kev": _json_bool(item.get("kev") or item.get("known_exploited") or item.get("in_kev")) or False,
+        "summary": _first_json_string(item, ("summary", "description", "title")),
+        "source": _first_json_string(item, ("source", "catalog")) or "vulnerability-catalog",
+    }
+    return VulnerabilityReference.model_validate(payload)
+
+
+def _first_json_string(item: Mapping[Any, Any], keys: Sequence[str]) -> str | None:
+    for key in keys:
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return str(value)
+    return None
+
+
+def _json_string_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [token.strip() for token in value.replace(";", ",").split(",") if token.strip()]
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return [str(value)]
+    return []
+
+
+def _json_float(value: object) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _json_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "yes", "1"}:
+            return True
+        if lowered in {"false", "no", "0"}:
+            return False
+    return None
 
 
 def _load_assets(asset_specs: list[str], asset_file: Path | None) -> list[Asset]:

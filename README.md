@@ -480,6 +480,59 @@ uv run vrp-hunt tool-doctor \
   --install-plan-output artifacts/tools/install-plan.sh
 ```
 
+Audit saved nuclei template metadata against an explicit safe allowlist before
+any scan is considered:
+
+```bash
+uv run vrp-hunt scanner-nuclei-audit \
+  --profile config/nuclei-safe-profile.json \
+  --template-metadata artifacts/nuclei/template-index.jsonl \
+  --output artifacts/scanner/nuclei-audit.json
+```
+
+Match detected technologies to a local CVE catalog with KEV/CVSS enrichment:
+
+```bash
+uv run vrp-hunt scanner-vuln-match \
+  --technology-assets artifacts/endpoint-mine/technology-assets.jsonl \
+  --vuln-catalog artifacts/scanner/vuln-catalog.json \
+  --output artifacts/scanner/vuln-match.json \
+  --assets-output artifacts/scanner/vuln-match-assets.jsonl
+```
+
+Plan cloud bucket and GitHub checks without executing the metadata requests:
+
+```bash
+uv run vrp-hunt scanner-cloud-plan \
+  --domain google.com \
+  --org-token google \
+  --output artifacts/scanner/cloud-plan.json \
+  --assets-output artifacts/scanner/cloud-assets.jsonl
+
+uv run vrp-hunt scanner-github-plan \
+  --scope-domain google.com \
+  --org google \
+  --output artifacts/scanner/github-plan.json
+```
+
+Import saved scanner outputs while redacting secret material:
+
+```bash
+uv run vrp-hunt scanner-secret-import \
+  --scanner gitleaks \
+  --input artifacts/scanners/gitleaks.json \
+  --output artifacts/scanner/secrets.json \
+  --assets-output artifacts/scanner/secret-assets.jsonl
+
+uv run vrp-hunt scanner-cicd-import \
+  --input artifacts/scanners/github-actions-artifacts.json \
+  --output artifacts/scanner/cicd.json
+
+uv run vrp-hunt scanner-container-import \
+  --input artifacts/scanners/docker-inspect.json \
+  --output artifacts/scanner/containers.json
+```
+
 Run the safe automation loop and write redacted artifacts:
 
 ```bash

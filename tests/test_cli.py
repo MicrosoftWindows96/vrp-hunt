@@ -2974,3 +2974,134 @@ def test_owned_crawl_plan_cli_rejects_missing_pages(capsys) -> None:  # type: ig
 
     assert exit_code == 2
     assert "at least one --page" in captured.err
+
+
+def test_scanner_nuclei_audit_cli_writes_allowlist_report(tmp_path: Path) -> None:
+    profile_path = tmp_path / "profile.json"
+    templates_path = tmp_path / "templates.jsonl"
+    output_path = tmp_path / "nuclei-audit.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "profile_id": "safe",
+                "templates": ["http/exposures/git-config.yaml"],
+                "tags": ["exposure"],
+                "severity": ["low"],
+                "protocol_types": ["http"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    templates_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "id": "git-config",
+                        "path": "http/exposures/git-config.yaml",
+                        "info": {"severity": "low", "tags": ["exposure"]},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "id": "fuzzer",
+                        "path": "http/fuzz/fuzzer.yaml",
+                        "info": {"severity": "high", "tags": ["fuzz"]},
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "scanner-nuclei-audit",
+            "--profile",
+            str(profile_path),
+            "--template-metadata",
+            str(templates_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 1
+    assert output["allowed_templates"][0]["template_id"] == "git-config"
+    assert output["blocked_templates"][0]["template_id"] == "fuzzer"
+    assert "aggressive tags blocked: fuzz" in output["findings"][1]["reasons"]
+
+
+def test_scanner_cloud_plan_cli_writes_metadata_only_assets(tmp_path: Path) -> None:
+    output_path = tmp_path / "cloud-plan.json"
+    assets_path = tmp_path / "cloud-assets.jsonl"
+
+    exit_code = main(
+        [
+            "scanner-cloud-plan",
+            "--domain",
+            "www.google.com",
+            "--org-token",
+            "vrp",
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    assets = [json.loads(line) for line in assets_path.read_text(encoding="utf-8").splitlines()]
+
+    assert exit_code == 0
+    assert output["total_candidates"] > 0
+    assert output["metadata_requests"][0]["method"] == "HEAD"
+    assert output["metadata_requests"][0]["metadata_only"]
+    assert assets[0]["metadata"]["approval_required"] == "true"
+
+
+def test_scanner_secret_import_cli_redacts_findings_and_assets(tmp_path: Path) -> None:
+    input_path = tmp_path / "gitleaks.json"
+    output_path = tmp_path / "secret-report.json"
+    assets_path = tmp_path / "secret-assets.jsonl"
+    raw_secret = "AIzaSyVerySecretGoogleApiKeyValue"
+    input_path.write_text(
+        json.dumps(
+            [
+                {
+                    "RuleID": "generic-api-key",
+                    "File": "src/app.py",
+                    "StartLine": 3,
+                    "Secret": raw_secret,
+                    "Fingerprint": "abc123def456",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "scanner-secret-import",
+            "--scanner",
+            "gitleaks",
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--assets-output",
+            str(assets_path),
+        ]
+    )
+
+    output_text = output_path.read_text(encoding="utf-8")
+    assets_text = assets_path.read_text(encoding="utf-8")
+    output = json.loads(output_text)
+
+    assert exit_code == 0
+    assert output["findings"][0]["redacted_secret"] == "<redacted>"
+    assert raw_secret not in output_text
+    assert raw_secret not in assets_text

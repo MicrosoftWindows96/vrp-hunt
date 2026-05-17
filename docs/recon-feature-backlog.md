@@ -73,17 +73,17 @@
 
 ## Scanner Integrations
 
-- [ ] Nuclei template allowlist profiles
-- [ ] Nuclei template metadata audit before execution
-- [ ] CVE-to-tech matching before any template scan
-- [ ] KEV/CVSS enrichment for detected technologies
-- [ ] Cloud bucket name candidate generation from owned domains
-- [ ] Cloud bucket existence checks with non-invasive metadata only
-- [ ] GitHub org/repo discovery for in-scope orgs
-- [ ] GitHub code search integration for owned orgs
-- [ ] Secret scanning result importer from gitleaks/trufflehog
-- [ ] CI/CD exposure checks for public workflow artifacts, leaked logs, and Actions config
-- [ ] Container/image metadata discovery for owned repos
+- [x] Nuclei template allowlist profiles
+- [x] Nuclei template metadata audit before execution
+- [x] CVE-to-tech matching before any template scan
+- [x] KEV/CVSS enrichment for detected technologies
+- [x] Cloud bucket name candidate generation from owned domains
+- [x] Cloud bucket existence checks with non-invasive metadata only
+- [x] GitHub org/repo discovery for in-scope orgs
+- [x] GitHub code search integration for owned orgs
+- [x] Secret scanning result importer from gitleaks/trufflehog
+- [x] CI/CD exposure checks for public workflow artifacts, leaked logs, and Actions config
+- [x] Container/image metadata discovery for owned repos
 
 ## Mobile Analysis
 
