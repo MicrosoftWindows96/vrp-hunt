@@ -417,6 +417,11 @@ uv run vrp-hunt owned-crawl-plan \
   --plan-output artifacts/owned/validation-plan.json
 ```
 
+The crawl plan records redacted IDOR candidates, OAuth flow structure, CSRF
+form/cookie context, passive XSS reflection candidates, and XSLeak surfaces from
+saved owned-account snapshots. It does not replay payloads or scrape account
+data.
+
 Execute safe non-traffic handlers:
 
 ```bash

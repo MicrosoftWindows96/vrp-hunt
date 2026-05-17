@@ -15,9 +15,14 @@ def test_owned_account_crawl_feeds_idor_oauth_and_csrf_validators() -> None:
             OwnedAccountCrawlPage(
                 account_id="owned-a",
                 url="https://docs.google.com/document/d/owned/edit?usp=sharing",
+                response_headers={
+                    "set-cookie": "SID=redacted; Secure; HttpOnly; SameSite=Lax, XSRF=redacted; SameSite=Strict",
+                    "cache-control": "private, no-store",
+                    "x-frame-options": "DENY",
+                },
                 body="""
                 <a href="https://docs.google.com/document/d/owned-b/edit?secret=drop">doc</a>
-                <a href="https://accounts.google.com/o/oauth2/v2/auth?client_id=abc&redirect_uri=https://www.google.com/cb&scope=openid">oauth</a>
+                <a href="https://accounts.google.com/o/oauth2/v2/auth?client_id=abc&redirect_uri=https://www.google.com/cb&scope=openid%20email&state=owned">oauth</a>
                 <form method="post" action="/document/d/owned/update?debug=1">
                   <input name="csrf_token" value="redacted">
                   <input name="title" value="owned">
@@ -36,8 +41,44 @@ def test_owned_account_crawl_feeds_idor_oauth_and_csrf_validators() -> None:
     assert "https://docs.google.com/document/d/owned-b/edit" in values
     assert "https://accounts.google.com/o/oauth2/v2/auth" in values
     assert not any("secret=drop" in asset.value for asset in result.assets)
+    assert result.idor_candidates[0].object_host == "docs.google.com"
+    assert result.oauth_flows[0].scope_names == ["email", "openid"]
+    assert result.oauth_flows[0].client_id_hash
+    assert result.oauth_flows[0].redirect_uri == "https://www.google.com/cb"
     assert result.forms[0].has_csrf_token
     assert result.forms[0].csrf_token_names == ["csrf_token"]
+    assert result.forms[0].csrf_cookie_names == ["XSRF"]
+    assert "SID:lax" in result.forms[0].same_site_cookie_names
+
+
+def test_owned_account_crawl_inventories_xss_and_xsleak_surfaces() -> None:
+    result = build_owned_account_crawl_plan(
+        [
+            OwnedAccountCrawlPage(
+                account_id="owned-a",
+                url="https://accounts.google.com/profile?display=owned",
+                response_headers={"cache-control": "public, max-age=60"},
+                body="""
+                <html>
+                  <body>display</body>
+                  <form><input name="display" value="owned"></form>
+                  <a href="/continue?next=https://accounts.google.com/profile">redirect</a>
+                </html>
+                """,
+            )
+        ],
+        config=OwnedAccountCrawlConfig(scope_domains=["google.com"]),
+    )
+
+    action_types = {action.action_type for action in result.validation_plan.actions}
+
+    assert result.xss_reflections[0].parameter_name == "display"
+    assert {surface.surface_type for surface in result.xsleak_surfaces} == {
+        "cacheable-auth-boundary",
+        "frameable",
+        "redirect",
+    }
+    assert {"xss_validation", "xsleak_validation"} <= action_types
 
 
 def test_owned_account_crawl_filters_out_of_scope_links() -> None:

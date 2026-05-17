@@ -97,16 +97,16 @@
 
 ## Authenticated Owned-Account Testing
 
-- [ ] Owned-account scenario library for IDOR, OAuth, CSRF, XSS, and XSLeak
-- [ ] Authenticated crawl using owned profiles only
-- [ ] Cookie/session vault with redacted artifact references
-- [ ] Role matrix builder from owned accounts
-- [ ] Object catalog generator from user-created test objects
-- [ ] IDOR candidate generator from owned object URLs
-- [ ] OAuth flow mapper for redirect URI, scopes, client IDs, and consent screens
-- [ ] CSRF form inventory with token, cookie, and SameSite metadata
-- [ ] XSS reflection inventory without exploit payload automation
-- [ ] XSLeak surface inventory for frames, redirects, and cacheable auth boundaries
+- [x] Owned-account scenario library for IDOR, OAuth, CSRF, XSS, and XSLeak
+- [x] Authenticated crawl using owned profiles only
+- [x] Cookie/session vault with redacted artifact references
+- [x] Role matrix builder from owned accounts
+- [x] Object catalog generator from user-created test objects
+- [x] IDOR candidate generator from owned object URLs
+- [x] OAuth flow mapper for redirect URI, scopes, client IDs, and consent screens
+- [x] CSRF form inventory with token, cookie, and SameSite metadata
+- [x] XSS reflection inventory without exploit payload automation
+- [x] XSLeak surface inventory for frames, redirects, and cacheable auth boundaries
 
 ## Evidence And Reporting
 
